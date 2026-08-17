@@ -294,6 +294,8 @@ void loop() {
     return;
   }
 
+  if (showingResult && diceCount == 1 && !prev && !next) { acceptRoll(dice); return; }
+
   uint32_t now = millis();
   if (showingResult && (prev || next) && now - lastNavMs > 180) {
     resultPage = prev ? (resultPage + 5) % 6 : (resultPage + 1) % 6;

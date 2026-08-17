@@ -53,6 +53,7 @@ The SD report must not store raw rolls, raw entropy, mnemonic, passphrase, seed,
 ## Controls
 
 - `1`..`6`: enter die roll
+- `1`..`6` on result page: return to input and record the roll
 - `Enter`: validate and create audit fingerprint after 256 VN bits
 - Up/Left or `W/A`: previous result page
 - Down/Right or `S/D`: next result page
