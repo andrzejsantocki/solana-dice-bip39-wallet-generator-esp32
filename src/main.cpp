@@ -269,7 +269,6 @@ void loop() {
   bool pressed = M5Cardputer.Keyboard.isPressed();
   if (!pressed) { waitingRelease = false; return; }
   if (waitingRelease) return;
-  if (!M5Cardputer.Keyboard.isChange()) return;
 
   Keyboard_Class::KeysState ks = M5Cardputer.Keyboard.keysState();
   waitingRelease = true;
