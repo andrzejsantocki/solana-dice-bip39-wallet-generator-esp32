@@ -1,27 +1,70 @@
-# Wallet Local Dice Generator ESP32 — Cardputer ADV
+# Solana Dice BIP39 Wallet Generator ESP32 — Cardputer ADV
 
-![Cardputer ADV dice wallet firmware](assets/cardputer-adv-dice-wallet-hero.png)
+![Cardputer ADV dice entropy firmware](assets/cardputer-adv-dice-wallet-hero.png)
 
 Launcher-ready PlatformIO firmware for M5Stack Cardputer/Cardputer ADV.
 
-Current firmware is a safe offline dice-entropy UI:
+Current release is a dice entropy / BIP39 precursor firmware, not a complete wallet generator yet.
 
-- colorful 240x135 Cardputer-sized display UI
-- accepts physical d6 rolls: keys `1`..`6`
-- enforces Von Neumann extraction from roll pairs
-- requires at least 256 Von Neumann bits before hashing
-- no fixed roll-count gate; fair dice typically need about 615 rolls for 256 VN bits, but the firmware trusts the actual VN-bit count
-- `Enter` validates + computes SHA-256(VN 32-byte entropy)
-- up/down arrows navigate result pages
-- `Del` erases last roll; after result screen, `Del` clears
-- writes `/dice_wallet/report.txt` on SD card when available
+## Current scope
 
-Security note: dice transcript is secret wallet material. Report intentionally does not save raw rolls. This firmware currently shows entropy hash only; it does not yet display a BIP39 mnemonic or private key.
+- colorful 240x135 Cardputer ADV UI
+- physical d6 input with same-key repeat guard
+- Von Neumann extraction from roll pairs:
+  - equal pair: discarded
+  - first < second: bit 0
+  - first > second: bit 1
+- hard gate: at least 256 accepted VN bits
+- no fixed roll-count gate; fair d6 usually needs about 615 rolls, but actual VN bit count wins
+- SHA-256 audit fingerprint display, split into large readable numbered lines
+- result pages for fingerprint, BIP39 passphrase warning, Solflare/Phantom path notes, mnemonic status, sanity checks, and SD audit
+- SD report at `/dice_wallet/report.txt` when available
+- startup disables Wi-Fi and Bluetooth and displays `RADIOS OFF`
+
+## Not implemented yet
+
+- BIP39 mnemonic generation
+- BIP39 passphrase input / NFKD normalization
+- SLIP-0010 Ed25519 derivation
+- Solana address derivation
+- private-key export
+
+Do not use this firmware for real-money wallet generation yet.
+
+## Crypto contract
+
+The intended future contract is:
+
+```text
+physical d6 rolls
+→ Von Neumann extraction
+→ rawEntropy[32]
+→ BIP39 ENT
+```
+
+The displayed SHA-256 value is an audit fingerprint only:
+
+```text
+SHA256("DiceWallet audit v1" || rawEntropy[32])
+```
+
+The SD report must not store raw rolls, raw entropy, mnemonic, passphrase, seed, or private keys.
+
+## Controls
+
+- `1`..`6`: enter die roll
+- `Enter`: validate and create audit fingerprint after 256 VN bits
+- Up/Left or `W/A`: previous result page
+- Down/Right or `S/D`: next result page
+- `Del` on input page: remove last roll
+- `Del` on result page: arm clear-all
+- `Y`: confirm clear-all
+- `N`: cancel clear-all
 
 ## Build
 
 ```bash
-pio run
+python -m platformio run
 ```
 
 Output:
@@ -30,7 +73,7 @@ Output:
 .pio/build/cardputer_adv_launcher/firmware.bin
 ```
 
-Rename for Launcher if desired:
+Release binary name:
 
 ```text
 DiceWallet-cardputer-adv.bin
@@ -39,10 +82,15 @@ DiceWallet-cardputer-adv.bin
 ## Run via Launcher
 
 1. Install M5Launcher/Cardputer ADV Launcher on device.
-2. Copy `firmware.bin` to FAT32 SD card or upload via Launcher WebUI.
+2. Copy `DiceWallet-cardputer-adv.bin` to FAT32 SD card or upload via Launcher WebUI.
 3. Launcher → SD/WUI → select binary → install.
-4. Reboot → app launches.
+4. Reboot.
 
 ## Target
 
-`platformio.ini` uses `esp32-s3-devkitc-1` + `M5Cardputer` library because Cardputer ADV support is in the M5Cardputer Arduino library.
+`platformio.ini` pins:
+
+- `espressif32@6.4.0`
+- `M5Cardputer@1.1.1`
+
+The project uses `esp32-s3-devkitc-1` because Cardputer ADV support is provided by the M5Cardputer Arduino library.

@@ -1,0 +1,34 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  platformio:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+      - name: Set up Python
+        uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c
+        with:
+          python-version: '3.10'
+      - name: Install PlatformIO
+        run: python -m pip install platformio==6.1.19
+      - name: Build firmware
+        run: python -m platformio run
+      - name: Record firmware digest
+        run: sha256sum .pio/build/cardputer_adv_launcher/firmware.bin > firmware.sha256
+      - name: Upload firmware artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cardputer-adv-firmware
+          path: |
+            .pio/build/cardputer_adv_launcher/firmware.bin
+            firmware.sha256

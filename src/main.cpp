@@ -2,6 +2,8 @@
 #include <SPI.h>
 #include <SD.h>
 #include <mbedtls/sha256.h>
+#include <WiFi.h>
+#include <esp_bt.h>
 
 #define SD_SPI_SCK_PIN 40
 #define SD_SPI_MISO_PIN 39
@@ -19,6 +21,7 @@ constexpr uint16_t TEXT = 0xFFFF, MUTED = 0x9CF3, GREEN = 0x4FEA, RED = 0xF986;
 
 String rolls, entropyHex, reportText;
 String statusLine = "VN mode: enter d6 rolls 1..6";
+String lastAssessment = "";
 uint16_t faceCount[6] = {0};
 uint16_t vnBits = 0, ties = 0, maxStreak = 0;
 uint32_t lastRollMs = 0;
@@ -26,7 +29,7 @@ uint32_t lastNavMs = 0;
 uint32_t lastEnterMs = 0;
 char lastRollChar = 0;
 int resultPage = 0;
-bool hasHash = false, showingResult = false, sdOK = false;
+bool hasHash = false, showingResult = false, sdOK = false, clearArmed = false, lastReportOK = false;
 
 void fillRound(int x, int y, int w, int h, int r, uint16_t color) { M5Cardputer.Display.fillRoundRect(x, y, w, h, r, color); }
 void textAt(int x, int y, const String& s, uint16_t fg = TEXT, uint16_t bg = BG, float size = 1) {
@@ -51,22 +54,26 @@ void computeStats() {
 bool assessmentOK(String* why = nullptr) {
   computeStats();
   String w = "";
-  if (vnBits < 256) w += "VN bits <256. ";
-  if (vnBits >= 256 && rolls.length() < 520) w += "Unusually few rolls. ";
-  for (int i = 0; i < 6; ++i) if (faceCount[i] == 0) w += "Missing face " + String(i + 1) + ". ";
-  if (maxStreak >= 8) w += "Long streak. ";
+  if (vnBits < 256) {
+    w = "BLOCK: VN bits <256.";
+    if (why) *why = w;
+    return false;
+  }
+  if (rolls.length() < 520) w += "WARN low roll count. ";
+  for (int i = 0; i < 6; ++i) if (faceCount[i] == 0) w += "WARN missing face " + String(i + 1) + ". ";
+  if (maxStreak >= 8) w += "WARN long streak. ";
   float pairs = rolls.length() / 2.0f;
   float tieRate = pairs > 0 ? ties / pairs : 0;
-  if (pairs >= 100 && (tieRate < 0.08f || tieRate > 0.27f)) w += "Tie rate off. ";
-  if (why) *why = w.length() ? w : "PASS: no simple anomaly detected. VN>=256.";
-  return w.length() == 0;
+  if (pairs >= 100 && (tieRate < 0.08f || tieRate > 0.27f)) w += "WARN tie rate unusual. ";
+  if (why) *why = w.length() ? w : "SANITY OK: no simple anomaly. Not proof of randomness.";
+  return true;
 }
 
 void drawHeader() {
   M5Cardputer.Display.fillRect(0, 0, 240, 135, BG);
   for (int i = 0; i < 240; i += 8) M5Cardputer.Display.drawFastVLine(i, 0, 135, (i % 24 == 0) ? 0x0AEE : 0x09AD);
   fillRound(4, 3, 232, 20, 6, PANEL2); M5Cardputer.Display.drawRoundRect(4, 3, 232, 20, 6, CYAN);
-  textAt(12, 8, "DICE WALLET // VN ENFORCED", CYAN, PANEL2);
+  textAt(12, 8, "DICE ENTROPY // RADIOS OFF", CYAN, PANEL2);
   fillRound(210, 7, 18, 12, 3, showingResult ? GREEN : (sdOK ? MINT : GOLD));
 }
 
@@ -101,7 +108,7 @@ void drawResult() {
   fillRound(8, 28, 224, 98, 10, PANEL); M5Cardputer.Display.drawRoundRect(8, 28, 224, 98, 10, ok ? GREEN : RED);
   textAt(18, 36, "page " + String(resultPage + 1) + "/6  arrows up/down", MUTED, PANEL);
   if (resultPage == 0) {
-    textAt(18, 48, "1) SHA256 ENTROPY", GREEN, PANEL);
+    textAt(18, 48, "1) SHA256 FINGERPRINT", GREEN, PANEL);
     M5Cardputer.Display.setTextSize(2); M5Cardputer.Display.setTextColor(CYAN, PANEL);
     M5Cardputer.Display.drawString("1|" + entropyHex.substring(0, 16), 12, 61);
     M5Cardputer.Display.drawString("2|" + entropyHex.substring(16, 32), 12, 77);
@@ -109,7 +116,7 @@ void drawResult() {
     M5Cardputer.Display.drawString("4|" + entropyHex.substring(48, 64), 12, 109);
   } else if (resultPage == 1) {
     textAt(18, 50, "2) PASSPHRASE", GOLD, PANEL);
-    textAt(18, 64, "Optional 25th word layer.", TEXT, PANEL);
+    textAt(18, 64, "Optional BIP39 passphrase.", TEXT, PANEL);
     textAt(18, 78, "Changes every address.", TEXT, PANEL);
     textAt(18, 96, "Lose it => funds lost.", ROSE, PANEL);
     textAt(18, 108, "Default empty for restore.", MUTED, PANEL);
@@ -126,39 +133,46 @@ void drawResult() {
     textAt(18, 96, "Not implemented yet here.", ROSE, PANEL);
     textAt(18, 108, "Next build adds BIP39.", MUTED, PANEL);
   } else if (resultPage == 4) {
-    textAt(18, 50, ok ? "5) ASSESSMENT: PASS" : "5) ASSESSMENT: FAIL", ok ? GREEN : RED, PANEL);
+    textAt(18, 50, ok ? "5) SANITY: OK" : "5) SANITY: BLOCK", ok ? GREEN : RED, PANEL);
     textAt(18, 64, why.substring(0, 34), ok ? GREEN : ROSE, PANEL);
     textAt(18, 76, why.substring(34, 68), ok ? GREEN : ROSE, PANEL);
-    textAt(18, 100, "Fail => do not use/fund.", ROSE, PANEL);
+    textAt(18, 100, ok ? "Warnings are not proof." : "Blocked: add more rolls.", ROSE, PANEL);
   } else {
     textAt(18, 50, "6) SD / AUDIT", sdOK ? MINT : ROSE, PANEL);
-    textAt(18, 64, sdOK ? "/dice_wallet/report.txt" : "SD unavailable", TEXT, PANEL);
-    textAt(18, 82, "Report excludes rolls.", ROSE, PANEL);
-    textAt(18, 104, "Del clears. Digits return.", MUTED, PANEL);
+    textAt(18, 64, sdOK ? (lastReportOK ? "report write OK" : "report not written") : "SD unavailable", lastReportOK ? GREEN : ROSE, PANEL);
+    textAt(18, 78, "/dice_wallet/report.txt", TEXT, PANEL);
+    textAt(18, 92, "Report excludes secrets.", ROSE, PANEL);
+    textAt(18, 108, clearArmed ? "Y=yes N=no clear all" : "Del arms clear", MUTED, PANEL);
   }
 }
 
 void writeReport(bool ok, const String& why) {
+  lastReportOK = false;
   if (!sdOK) return;
   SD.mkdir("/dice_wallet");
   File f = SD.open("/dice_wallet/report.txt", FILE_APPEND);
   if (!f) return;
-  f.println("--- dice wallet assessment ---");
-  f.println(ok ? "PASS" : "FAIL");
+  f.println("--- dice entropy sanity report ---");
+  f.println(ok ? "SANITY_OK" : "SANITY_BLOCK");
   f.println(why);
   f.println("rolls=" + String(rolls.length()));
   f.println("vn_bits=" + String(vnBits));
   f.println("ties=" + String(ties));
   f.println("max_streak=" + String(maxStreak));
   f.println("faces=" + String(faceCount[0]) + "," + String(faceCount[1]) + "," + String(faceCount[2]) + "," + String(faceCount[3]) + "," + String(faceCount[4]) + "," + String(faceCount[5]));
-  f.println("entropy_sha256_vn=" + entropyHex);
+  f.println("audit_fingerprint_sha256=" + entropyHex);
   f.println("roll_transcript_saved=false");
+  f.println("raw_vn_entropy_saved=false");
+  f.println("used_vn_bits=256");
+  f.println("surplus_vn_bits=" + String(vnBits > 256 ? vnBits - 256 : 0));
+  f.flush();
+  lastReportOK = !f.getWriteError();
   f.close();
 }
 
 void makeEntropy() {
   String why; bool ok = assessmentOK(&why);
-  if (!ok) { hasHash = false; statusLine = "validation failed"; entropyHex = ""; resultPage = 4; writeReport(false, why); drawResult(); return; }
+  if (!ok) { hasHash = false; statusLine = "need 256 VN bits"; entropyHex = ""; resultPage = 4; lastAssessment = why; writeReport(false, why); drawResult(); return; }
 
   uint8_t bytes[32] = {0}; uint16_t bit = 0;
   for (size_t i = 1; i < rolls.length() && bit < 256; i += 2) {
@@ -166,17 +180,29 @@ void makeEntropy() {
     if (a > b) bytes[bit / 8] |= (1 << (7 - (bit % 8)));
     bit++;
   }
-  uint8_t hash[32]; mbedtls_sha256(bytes, 32, hash, 0);
+  uint8_t hash[32];
+  const char domain[] = "DiceWallet audit v1";
+  mbedtls_sha256_context ctx;
+  mbedtls_sha256_init(&ctx);
+  mbedtls_sha256_starts(&ctx, 0);
+  mbedtls_sha256_update(&ctx, reinterpret_cast<const unsigned char*>(domain), sizeof(domain) - 1);
+  mbedtls_sha256_update(&ctx, bytes, 32);
+  mbedtls_sha256_finish(&ctx, hash);
+  mbedtls_sha256_free(&ctx);
   entropyHex = ""; const char* hx = "0123456789abcdef";
   for (uint8_t b : hash) { entropyHex += hx[b >> 4]; entropyHex += hx[b & 15]; }
-  hasHash = true; statusLine = "VN entropy hash ready"; resultPage = 0; writeReport(true, why); drawResult();
+  volatile uint8_t* wipeBytes = bytes;
+  volatile uint8_t* wipeHash = hash;
+  for (size_t i = 0; i < sizeof(bytes); ++i) wipeBytes[i] = 0;
+  for (size_t i = 0; i < sizeof(hash); ++i) wipeHash[i] = 0;
+  hasHash = true; statusLine = "audit fingerprint ready"; resultPage = 0; lastAssessment = why; writeReport(true, why); drawResult();
 }
 
 void handleChar(char c) {
   if (c < '1' || c > '6') return;
 
   uint32_t now = millis();
-  if (c == lastRollChar && now - lastRollMs < 350) {
+  if (!showingResult && c == lastRollChar && now - lastRollMs < 350) {
     statusLine = "ignored held key repeat";
     drawMain();
     return;
@@ -197,6 +223,9 @@ void initSD() {
 }  // namespace
 
 void setup() {
+  WiFi.mode(WIFI_OFF);
+  btStop();
+  esp_bt_controller_disable();
   auto cfg = M5.config(); M5Cardputer.begin(cfg, true); M5Cardputer.Display.setRotation(1); M5Cardputer.Display.setFont(&fonts::Font0);
   initSD(); drawMain();
 }
@@ -224,10 +253,17 @@ void loop() {
     return;
   }
 
+  if (clearArmed) {
+    for (auto c : ks.word) {
+      if (c == 'y' || c == 'Y') { rolls = ""; entropyHex = ""; hasHash = false; showingResult = false; clearArmed = false; statusLine = "cleared"; resultPage = 0; lastRollChar = 0; lastRollMs = 0; drawMain(); return; }
+      if (c == 'n' || c == 'N') { clearArmed = false; statusLine = "clear cancelled"; drawResult(); return; }
+    }
+  }
   for (auto c : ks.word) handleChar(c);
   if (ks.del) {
-    if (showingResult || hasHash) { rolls = ""; entropyHex = ""; hasHash = false; showingResult = false; statusLine = "cleared"; resultPage = 0; lastRollChar = 0; lastRollMs = 0; }
-    else if (rolls.length()) { rolls.remove(rolls.length() - 1); statusLine = "last roll erased"; }
+    if (showingResult || hasHash) {
+      if (!clearArmed) { clearArmed = true; statusLine = "Clear all? press Y"; drawResult(); return; }
+    } else if (rolls.length()) { rolls.remove(rolls.length() - 1); statusLine = "last roll erased"; clearArmed = false; }
     drawMain();
   }
   if (ks.enter && now - lastEnterMs > 500) {
