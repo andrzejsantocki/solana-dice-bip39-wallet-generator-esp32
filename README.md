@@ -9,7 +9,7 @@ Current release is a dice entropy / BIP39 precursor firmware, not a complete wal
 ## Current scope
 
 - colorful 240x135 Cardputer ADV UI
-- physical d6 input is processed on keyboard state-change/down-edge events so held keys do not add repeated rolls
+- physical d6 input uses a strict press-release FSM: one complete keypress = one roll; dice-key chords are ignored
 - Von Neumann extraction from roll pairs:
   - equal pair: discarded
   - first < second: bit 0
@@ -48,7 +48,7 @@ The displayed SHA-256 value is an audit fingerprint only:
 SHA256("DiceWallet audit v1" || rawEntropy[32])
 ```
 
-The SD report must not store raw rolls, raw entropy, mnemonic, passphrase, seed, or private keys.
+The SD report must not store raw rolls, raw entropy, mnemonic, passphrase, seed, or private keys. Runtime roll storage uses a fixed buffer that is overwritten on clear/delete instead of Arduino `String`.
 
 ## Controls
 
@@ -57,9 +57,10 @@ The SD report must not store raw rolls, raw entropy, mnemonic, passphrase, seed,
 - Up/Left or `W/A`: previous result page
 - Down/Right or `S/D`: next result page
 - `Del` on input page: remove last roll
-- `Del` on result page: arm clear-all
+- `Del` on result page: arm modal clear-all confirmation
 - `Y`: confirm clear-all
 - `N`: cancel clear-all
+- while clear is armed, all other input is ignored
 
 ## Build
 

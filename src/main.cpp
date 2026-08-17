@@ -19,34 +19,53 @@ namespace {
 constexpr uint16_t BG = 0x08AC, PANEL = 0x118F, PANEL2 = 0x19F3;
 constexpr uint16_t CYAN = 0x07FF, MINT = 0x57F6, GOLD = 0xFEA0, ROSE = 0xF9B6;
 constexpr uint16_t TEXT = 0xFFFF, MUTED = 0x9CF3, GREEN = 0x4FEA, RED = 0xF986;
+constexpr size_t MAX_ROLLS = 1024;
 
-String rolls, entropyHex, reportText;
-String statusLine = "VN mode: enter d6 rolls 1..6";
+char rolls[MAX_ROLLS];
+size_t rollCount = 0;
+String entropyHex;
+String statusLine = "READY: press one d6 key";
 String lastAssessment = "";
 uint16_t faceCount[6] = {0};
 uint16_t vnBits = 0, ties = 0, maxStreak = 0;
-uint32_t lastRollMs = 0;
-uint32_t lastNavMs = 0;
-uint32_t lastEnterMs = 0;
-char lastRollChar = 0;
+uint32_t lastNavMs = 0, lastEnterMs = 0;
 int resultPage = 0;
 bool hasHash = false, showingResult = false, sdOK = false, clearArmed = false, lastReportOK = false, radiosOffOK = false;
+bool waitingRelease = false;
 
 void fillRound(int x, int y, int w, int h, int r, uint16_t color) { M5Cardputer.Display.fillRoundRect(x, y, w, h, r, color); }
 void textAt(int x, int y, const String& s, uint16_t fg = TEXT, uint16_t bg = BG, float size = 1) {
-  M5Cardputer.Display.setTextSize(size); M5Cardputer.Display.setTextColor(fg, bg); M5Cardputer.Display.drawString(s, x, y);
+  M5Cardputer.Display.setTextSize(size);
+  M5Cardputer.Display.setTextColor(fg, bg);
+  M5Cardputer.Display.drawString(s, x, y);
 }
 void label(int x, int y, const String& s) { textAt(x, y, s, MUTED, BG); }
 
+void wipeRolls() {
+  volatile char* p = rolls;
+  for (size_t i = 0; i < MAX_ROLLS; ++i) p[i] = 0;
+  rollCount = 0;
+}
+
+String rollTail(size_t n) {
+  String out;
+  size_t start = rollCount > n ? rollCount - n : 0;
+  out.reserve(rollCount - start);
+  for (size_t i = start; i < rollCount; ++i) out += rolls[i];
+  return out;
+}
+
 void computeStats() {
-  memset(faceCount, 0, sizeof(faceCount)); vnBits = 0; ties = 0; maxStreak = 0;
+  memset(faceCount, 0, sizeof(faceCount));
+  vnBits = 0; ties = 0; maxStreak = 0;
   char prev = 0; uint16_t streak = 0;
-  for (size_t i = 0; i < rolls.length(); ++i) {
-    char c = rolls[i]; if (c >= '1' && c <= '6') faceCount[c - '1']++;
+  for (size_t i = 0; i < rollCount; ++i) {
+    char c = rolls[i];
+    if (c >= '1' && c <= '6') faceCount[c - '1']++;
     if (c == prev) streak++; else { prev = c; streak = 1; }
     if (streak > maxStreak) maxStreak = streak;
   }
-  for (size_t i = 1; i < rolls.length(); i += 2) {
+  for (size_t i = 1; i < rollCount; i += 2) {
     char a = rolls[i - 1], b = rolls[i];
     if (a == b) ties++; else vnBits++;
   }
@@ -60,10 +79,10 @@ bool assessmentOK(String* why = nullptr) {
     if (why) *why = w;
     return false;
   }
-  if (rolls.length() < 520) w += "WARN low roll count. ";
+  if (rollCount < 520) w += "WARN low roll count. ";
   for (int i = 0; i < 6; ++i) if (faceCount[i] == 0) w += "WARN missing face " + String(i + 1) + ". ";
   if (maxStreak >= 8) w += "WARN long streak. ";
-  float pairs = rolls.length() / 2.0f;
+  float pairs = rollCount / 2.0f;
   float tieRate = pairs > 0 ? ties / pairs : 0;
   if (pairs >= 100 && (tieRate < 0.08f || tieRate > 0.27f)) w += "WARN tie rate unusual. ";
   if (why) *why = w.length() ? w : "SANITY OK: no simple anomaly. Not proof of randomness.";
@@ -73,7 +92,8 @@ bool assessmentOK(String* why = nullptr) {
 void drawHeader() {
   M5Cardputer.Display.fillRect(0, 0, 240, 135, BG);
   for (int i = 0; i < 240; i += 8) M5Cardputer.Display.drawFastVLine(i, 0, 135, (i % 24 == 0) ? 0x0AEE : 0x09AD);
-  fillRound(4, 3, 232, 20, 6, PANEL2); M5Cardputer.Display.drawRoundRect(4, 3, 232, 20, 6, CYAN);
+  fillRound(4, 3, 232, 20, 6, PANEL2);
+  M5Cardputer.Display.drawRoundRect(4, 3, 232, 20, 6, CYAN);
   textAt(12, 8, radiosOffOK ? "DICE ENTROPY // RADIOS OFF" : "RADIO STATE ERROR", radiosOffOK ? CYAN : RED, PANEL2);
   fillRound(210, 7, 18, 12, 3, showingResult ? GREEN : (sdOK ? MINT : GOLD));
 }
@@ -92,14 +112,14 @@ void drawMain() {
   showingResult = false;
   drawHeader(); computeStats();
   fillRound(7, 29, 118, 66, 8, PANEL); M5Cardputer.Display.drawRoundRect(7, 29, 118, 66, 8, 0x3338);
-  textAt(15, 37, "rolls", MUTED, PANEL); textAt(15, 50, String(rolls.length()), vnBits >= 256 ? GREEN : GOLD, PANEL, 2);
+  textAt(15, 37, "rolls", MUTED, PANEL); textAt(15, 50, String(rollCount), vnBits >= 256 ? GREEN : GOLD, PANEL, 2);
   textAt(68, 50, "VN " + String(vnBits) + "/256", vnBits >= 256 ? GREEN : GOLD, PANEL);
   textAt(15, 75, "ties " + String(ties) + "  streak " + String(maxStreak), MUTED, PANEL);
   textAt(15, 86, sdOK ? "SD report enabled" : "SD not mounted", sdOK ? MINT : ROSE, PANEL);
   drawBars();
   fillRound(7, 103, 226, 27, 7, PANEL2); M5Cardputer.Display.drawRoundRect(7, 103, 226, 27, 7, 0x3338);
-  String tail = rolls.length() > 24 ? rolls.substring(rolls.length() - 24) : rolls;
-  textAt(15, 110, tail.length() ? tail : "1..6 roll  enter=validate/hash", TEXT, PANEL2);
+  String tail = rollTail(24);
+  textAt(15, 110, tail.length() ? tail : "press one key: 1..6", TEXT, PANEL2);
   textAt(15, 121, statusLine, hasHash ? GREEN : MUTED, PANEL2);
 }
 
@@ -156,7 +176,7 @@ void writeReport(bool ok, const String& why) {
   f.println("--- dice entropy sanity report ---");
   f.println(ok ? "SANITY_OK" : "SANITY_BLOCK");
   f.println(why);
-  f.println("rolls=" + String(rolls.length()));
+  f.println("rolls=" + String(rollCount));
   f.println("vn_bits=" + String(vnBits));
   f.println("ties=" + String(ties));
   f.println("max_streak=" + String(maxStreak));
@@ -176,7 +196,7 @@ void makeEntropy() {
   if (!ok) { hasHash = false; statusLine = "need 256 VN bits"; entropyHex = ""; resultPage = 4; lastAssessment = why; writeReport(false, why); drawResult(); return; }
 
   uint8_t bytes[32] = {0}; uint16_t bit = 0;
-  for (size_t i = 1; i < rolls.length() && bit < 256; i += 2) {
+  for (size_t i = 1; i < rollCount && bit < 256; i += 2) {
     char a = rolls[i - 1], b = rolls[i]; if (a == b) continue;
     if (a > b) bytes[bit / 8] |= (1 << (7 - (bit % 8)));
     bit++;
@@ -199,15 +219,25 @@ void makeEntropy() {
   hasHash = true; statusLine = "audit fingerprint ready"; resultPage = 0; lastAssessment = why; writeReport(true, why); drawResult();
 }
 
-void handleChar(char c) {
+void acceptRoll(char c) {
   if (c < '1' || c > '6') return;
-
-  uint32_t now = millis();
-  lastRollChar = c;
-  lastRollMs = now;
-  rolls += c;
+  if (rollCount >= MAX_ROLLS) { statusLine = "max roll buffer reached"; drawMain(); return; }
+  rolls[rollCount++] = c;
   hasHash = false;
-  statusLine = "roll accepted";
+  clearArmed = false;
+  statusLine = "roll accepted; release key";
+  drawMain();
+}
+
+void clearEverything() {
+  wipeRolls();
+  entropyHex = "";
+  hasHash = false;
+  showingResult = false;
+  clearArmed = false;
+  waitingRelease = false;
+  statusLine = "cleared";
+  resultPage = 0;
   drawMain();
 }
 
@@ -230,23 +260,39 @@ void disableRadios() {
 void setup() {
   disableRadios();
   auto cfg = M5.config(); M5Cardputer.begin(cfg, true); M5Cardputer.Display.setRotation(1); M5Cardputer.Display.setFont(&fonts::Font0);
+  wipeRolls();
   initSD(); drawMain();
 }
 
 void loop() {
   M5Cardputer.update();
+  bool pressed = M5Cardputer.Keyboard.isPressed();
+  if (!pressed) { waitingRelease = false; return; }
+  if (waitingRelease) return;
   if (!M5Cardputer.Keyboard.isChange()) return;
-  if (!M5Cardputer.Keyboard.isPressed()) return;
 
   Keyboard_Class::KeysState ks = M5Cardputer.Keyboard.keysState();
-  bool prev = false, next = false;
+  waitingRelease = true;
+
+  bool yes = false, no = false, prev = false, next = false;
+  int diceCount = 0; char dice = 0;
   for (auto h : ks.hid_keys) {
     if (h == HID_UP || h == HID_LEFT) prev = true;
     if (h == HID_DOWN || h == HID_RIGHT) next = true;
   }
   for (auto c : ks.word) {
+    if (c == 'y' || c == 'Y') yes = true;
+    if (c == 'n' || c == 'N') no = true;
     if (c == 'w' || c == 'a' || c == 'W' || c == 'A') prev = true;
     if (c == 's' || c == 'd' || c == 'S' || c == 'D') next = true;
+    if (c >= '1' && c <= '6') { dice = c; diceCount++; }
+  }
+
+  if (clearArmed) {
+    if (yes) clearEverything();
+    else if (no) { clearArmed = false; statusLine = "clear cancelled"; drawResult(); }
+    else { statusLine = "Confirm clear: Y or N"; drawResult(); }
+    return;
   }
 
   uint32_t now = millis();
@@ -257,21 +303,15 @@ void loop() {
     return;
   }
 
-  if (clearArmed) {
-    for (auto c : ks.word) {
-      if (c == 'y' || c == 'Y') { rolls = ""; entropyHex = ""; hasHash = false; showingResult = false; clearArmed = false; statusLine = "cleared"; resultPage = 0; lastRollChar = 0; lastRollMs = 0; drawMain(); return; }
-      if (c == 'n' || c == 'N') { clearArmed = false; statusLine = "clear cancelled"; drawResult(); return; }
-    }
-  }
-  for (auto c : ks.word) handleChar(c);
   if (ks.del) {
-    if (showingResult || hasHash) {
-      if (!clearArmed) { clearArmed = true; statusLine = "Clear all? press Y"; drawResult(); return; }
-    } else if (rolls.length()) { rolls.remove(rolls.length() - 1); statusLine = "last roll erased"; clearArmed = false; }
+    if (showingResult || hasHash) { clearArmed = true; statusLine = "Clear all? press Y/N"; drawResult(); return; }
+    if (rollCount) { rolls[--rollCount] = 0; statusLine = "last roll erased"; }
     drawMain();
+    return;
   }
-  if (ks.enter && now - lastEnterMs > 500) {
-    lastEnterMs = now;
-    makeEntropy();
-  }
+
+  if (ks.enter && now - lastEnterMs > 500) { lastEnterMs = now; makeEntropy(); return; }
+
+  if (!showingResult && diceCount == 1) acceptRoll(dice);
+  else if (!showingResult && diceCount > 1) { statusLine = "ignored chord; press one key"; drawMain(); }
 }
