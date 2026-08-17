@@ -4,6 +4,7 @@
 #include <mbedtls/sha256.h>
 #include <WiFi.h>
 #include <esp_bt.h>
+#include <esp_wifi.h>
 
 #define SD_SPI_SCK_PIN 40
 #define SD_SPI_MISO_PIN 39
@@ -29,7 +30,7 @@ uint32_t lastNavMs = 0;
 uint32_t lastEnterMs = 0;
 char lastRollChar = 0;
 int resultPage = 0;
-bool hasHash = false, showingResult = false, sdOK = false, clearArmed = false, lastReportOK = false;
+bool hasHash = false, showingResult = false, sdOK = false, clearArmed = false, lastReportOK = false, radiosOffOK = false;
 
 void fillRound(int x, int y, int w, int h, int r, uint16_t color) { M5Cardputer.Display.fillRoundRect(x, y, w, h, r, color); }
 void textAt(int x, int y, const String& s, uint16_t fg = TEXT, uint16_t bg = BG, float size = 1) {
@@ -73,7 +74,7 @@ void drawHeader() {
   M5Cardputer.Display.fillRect(0, 0, 240, 135, BG);
   for (int i = 0; i < 240; i += 8) M5Cardputer.Display.drawFastVLine(i, 0, 135, (i % 24 == 0) ? 0x0AEE : 0x09AD);
   fillRound(4, 3, 232, 20, 6, PANEL2); M5Cardputer.Display.drawRoundRect(4, 3, 232, 20, 6, CYAN);
-  textAt(12, 8, "DICE ENTROPY // RADIOS OFF", CYAN, PANEL2);
+  textAt(12, 8, radiosOffOK ? "DICE ENTROPY // RADIOS OFF" : "RADIO STATE ERROR", radiosOffOK ? CYAN : RED, PANEL2);
   fillRound(210, 7, 18, 12, 3, showingResult ? GREEN : (sdOK ? MINT : GOLD));
 }
 
@@ -202,12 +203,6 @@ void handleChar(char c) {
   if (c < '1' || c > '6') return;
 
   uint32_t now = millis();
-  if (!showingResult && c == lastRollChar && now - lastRollMs < 350) {
-    statusLine = "ignored held key repeat";
-    drawMain();
-    return;
-  }
-
   lastRollChar = c;
   lastRollMs = now;
   rolls += c;
@@ -222,16 +217,25 @@ void initSD() {
 }
 }  // namespace
 
-void setup() {
-  WiFi.mode(WIFI_OFF);
+void disableRadios() {
+  WiFi.disconnect(true, true);
+  bool wifiModeOff = WiFi.mode(WIFI_OFF);
+  esp_wifi_stop();
   btStop();
   esp_bt_controller_disable();
+  auto btStatus = esp_bt_controller_get_status();
+  radiosOffOK = wifiModeOff && WiFi.getMode() == WIFI_OFF && btStatus != ESP_BT_CONTROLLER_STATUS_ENABLED;
+}
+
+void setup() {
+  disableRadios();
   auto cfg = M5.config(); M5Cardputer.begin(cfg, true); M5Cardputer.Display.setRotation(1); M5Cardputer.Display.setFont(&fonts::Font0);
   initSD(); drawMain();
 }
 
 void loop() {
   M5Cardputer.update();
+  if (!M5Cardputer.Keyboard.isChange()) return;
   if (!M5Cardputer.Keyboard.isPressed()) return;
 
   Keyboard_Class::KeysState ks = M5Cardputer.Keyboard.keysState();

@@ -9,7 +9,7 @@ Current release is a dice entropy / BIP39 precursor firmware, not a complete wal
 ## Current scope
 
 - colorful 240x135 Cardputer ADV UI
-- physical d6 input with same-key repeat guard
+- physical d6 input is processed on keyboard state-change/down-edge events so held keys do not add repeated rolls
 - Von Neumann extraction from roll pairs:
   - equal pair: discarded
   - first < second: bit 0
@@ -19,7 +19,7 @@ Current release is a dice entropy / BIP39 precursor firmware, not a complete wal
 - SHA-256 audit fingerprint display, split into large readable numbered lines
 - result pages for fingerprint, BIP39 passphrase warning, Solflare/Phantom path notes, mnemonic status, sanity checks, and SD audit
 - SD report at `/dice_wallet/report.txt` when available
-- startup disables Wi-Fi and Bluetooth and displays `RADIOS OFF`
+- startup disables Wi-Fi and Bluetooth; `RADIOS OFF` is shown only when the firmware sees radios disabled
 
 ## Not implemented yet
 
@@ -92,5 +92,12 @@ DiceWallet-cardputer-adv.bin
 
 - `espressif32@6.4.0`
 - `M5Cardputer@1.1.1`
+- `M5Unified@0.2.20`
+- `M5GFX@0.2.27`
+- `IRremote@4.7.1`
 
 The project uses `esp32-s3-devkitc-1` because Cardputer ADV support is provided by the M5Cardputer Arduino library.
+
+## Release integrity
+
+CI builds the firmware and checks that the committed `DiceWallet-cardputer-adv.bin` matches `.pio/build/cardputer_adv_launcher/firmware.bin`. The release also includes `DiceWallet-cardputer-adv.bin.sha256`.

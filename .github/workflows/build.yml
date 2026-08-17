@@ -25,6 +25,10 @@ jobs:
         run: python -m platformio run
       - name: Record firmware digest
         run: sha256sum .pio/build/cardputer_adv_launcher/firmware.bin > firmware.sha256
+      - name: Verify committed binary matches CI build
+        run: |
+          cmp DiceWallet-cardputer-adv.bin .pio/build/cardputer_adv_launcher/firmware.bin
+          sha256sum -c DiceWallet-cardputer-adv.bin.sha256
       - name: Upload firmware artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
