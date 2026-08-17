@@ -10,7 +10,7 @@ Current firmware is a safe offline dice-entropy UI:
 - accepts physical d6 rolls: keys `1`..`6`
 - enforces Von Neumann extraction from roll pairs
 - requires at least 256 Von Neumann bits before hashing
-- practical target: ~620+ d6 rolls
+- no fixed roll-count gate; fair dice typically need about 615 rolls for 256 VN bits, but the firmware trusts the actual VN-bit count
 - `Enter` validates + computes SHA-256(VN 32-byte entropy)
 - up/down arrows navigate result pages
 - `Del` erases last roll; after result screen, `Del` clears

@@ -51,8 +51,8 @@ void computeStats() {
 bool assessmentOK(String* why = nullptr) {
   computeStats();
   String w = "";
-  if (rolls.length() < 620) w += "Need ~620+ rolls for VN 256 bits. ";
   if (vnBits < 256) w += "VN bits <256. ";
+  if (vnBits >= 256 && rolls.length() < 520) w += "Unusually few rolls. ";
   for (int i = 0; i < 6; ++i) if (faceCount[i] == 0) w += "Missing face " + String(i + 1) + ". ";
   if (maxStreak >= 8) w += "Long streak. ";
   float pairs = rolls.length() / 2.0f;
@@ -84,7 +84,7 @@ void drawMain() {
   showingResult = false;
   drawHeader(); computeStats();
   fillRound(7, 29, 118, 66, 8, PANEL); M5Cardputer.Display.drawRoundRect(7, 29, 118, 66, 8, 0x3338);
-  textAt(15, 37, "rolls", MUTED, PANEL); textAt(15, 50, String(rolls.length()), rolls.length() >= 620 ? GREEN : GOLD, PANEL, 2);
+  textAt(15, 37, "rolls", MUTED, PANEL); textAt(15, 50, String(rolls.length()), vnBits >= 256 ? GREEN : GOLD, PANEL, 2);
   textAt(68, 50, "VN " + String(vnBits) + "/256", vnBits >= 256 ? GREEN : GOLD, PANEL);
   textAt(15, 75, "ties " + String(ties) + "  streak " + String(maxStreak), MUTED, PANEL);
   textAt(15, 86, sdOK ? "SD report enabled" : "SD not mounted", sdOK ? MINT : ROSE, PANEL);
