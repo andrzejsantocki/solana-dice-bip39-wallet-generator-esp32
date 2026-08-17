@@ -1,5 +1,7 @@
 # Wallet Local Dice Generator ESP32 — Cardputer ADV
 
+![Cardputer ADV dice wallet firmware](assets/cardputer-adv-dice-wallet-hero.png)
+
 Launcher-ready PlatformIO firmware for M5Stack Cardputer/Cardputer ADV.
 
 Current firmware is a safe offline dice-entropy UI:
