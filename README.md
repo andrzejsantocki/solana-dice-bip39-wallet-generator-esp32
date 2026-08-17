@@ -100,4 +100,4 @@ The project uses `esp32-s3-devkitc-1` because Cardputer ADV support is provided 
 
 ## Release integrity
 
-CI builds the firmware and checks that the committed `DiceWallet-cardputer-adv.bin` matches `.pio/build/cardputer_adv_launcher/firmware.bin`. The release also includes `DiceWallet-cardputer-adv.bin.sha256`.
+CI builds firmware artifacts on every push. For version tags, GitHub Actions publishes release assets directly from the CI-built `.pio/build/cardputer_adv_launcher/firmware.bin` plus `DiceWallet-cardputer-adv.bin.sha256`. Local committed binaries are convenience artifacts, not the root of trust.

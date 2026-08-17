@@ -3,11 +3,12 @@ name: build
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   platformio:
@@ -23,16 +24,23 @@ jobs:
         run: python -m pip install platformio==6.1.19
       - name: Build firmware
         run: python -m platformio run
-      - name: Record firmware digest
-        run: sha256sum .pio/build/cardputer_adv_launcher/firmware.bin > firmware.sha256
-      - name: Verify committed binary matches CI build
+      - name: Prepare firmware assets
         run: |
-          cmp DiceWallet-cardputer-adv.bin .pio/build/cardputer_adv_launcher/firmware.bin
-          sha256sum -c DiceWallet-cardputer-adv.bin.sha256
+          cp .pio/build/cardputer_adv_launcher/firmware.bin DiceWallet-cardputer-adv.bin
+          sha256sum DiceWallet-cardputer-adv.bin > DiceWallet-cardputer-adv.bin.sha256
       - name: Upload firmware artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: cardputer-adv-firmware
           path: |
-            .pio/build/cardputer_adv_launcher/firmware.bin
-            firmware.sha256
+            DiceWallet-cardputer-adv.bin
+            DiceWallet-cardputer-adv.bin.sha256
+      - name: Publish GitHub release from CI-built firmware
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            DiceWallet-cardputer-adv.bin DiceWallet-cardputer-adv.bin.sha256 \
+            --title "$GITHUB_REF_NAME" \
+            --notes "CI-built Cardputer ADV firmware. This release asset was built by GitHub Actions from tag $GITHUB_REF_NAME."
