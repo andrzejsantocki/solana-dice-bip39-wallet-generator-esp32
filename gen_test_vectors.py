@@ -38,6 +38,12 @@ for n in v["nfkd"]:
     out.append(f'  {{"{n["passphrase_nfd"]}", "{n["passphrase_nfc"]}", "{n["seed"]}"}},')
 out.append("};")
 out.append("")
+
+vn = v["vn"]
+out.append("typedef struct { const char* transcript; const char* entropy; "
+           "const char* fingerprint; const char* mnemonic; const char* address; } VnVector;")
+out.append(f'static const VnVector VN_VECTOR = {{"{vn["transcript"]}", "{vn["entropy"]}", "{vn["fingerprint"]}", "{vn["mnemonic"]}", "{vn["address"]}"}};')
+out.append("")
 out.append("#define BIP39_VECTOR_COUNT %d" % len(v["bip39"]))
 out.append("#define SLIP10_VECTOR_COUNT %d" % len(v["slip10"]))
 out.append("#define SOLANA_VECTOR_COUNT %d" % len(v["solana"]))

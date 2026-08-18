@@ -2,11 +2,21 @@
 set -e
 cd "$(dirname "$0")/.."
 ROOT=$(pwd)
-export PATH="$ROOT/.tmp/w64devkit/w64devkit/bin:$PATH"
-GCC="$ROOT/.tmp/w64devkit/w64devkit/bin/gcc"
-GXX="$ROOT/.tmp/w64devkit/w64devkit/bin/g++"
 INC="-Ilib/wallet_core -Ilib/bip39 -Ilib/ed25519 -Ilib/utf8proc -Itests/host_test"
 mkdir -p .tmp/obj
+
+# Portable toolchain detection: local w64devkit (author Windows machine) or
+# system gcc/g++ (CI ubuntu runner).
+if [ -x "$ROOT/.tmp/w64devkit/w64devkit/bin/gcc" ]; then
+  export PATH="$ROOT/.tmp/w64devkit/w64devkit/bin:$PATH"
+  GCC="$ROOT/.tmp/w64devkit/w64devkit/bin/gcc"
+  GXX="$ROOT/.tmp/w64devkit/w64devkit/bin/g++"
+  EXE=".exe"
+else
+  GCC="${GCC:-gcc}"
+  GXX="${GXX:-g++}"
+  EXE=""
+fi
 
 $GCC -O2 -c lib/ed25519/add_scalar.c -o .tmp/obj/add_scalar.o
 $GCC -O2 -c lib/ed25519/fe.c        -o .tmp/obj/fe.o
@@ -23,5 +33,5 @@ $GXX -O2 -std=c++17 -DUTF8PROC_STATIC $INC -c lib/wallet_core/wallet_core.cpp -o
 $GXX -O2 -std=c++17 $INC -c tests/host_test/wc_platform_host.cpp -o .tmp/obj/wc_platform_host.o
 $GXX -O2 -std=c++17 $INC -c tests/host_test/main.cpp -o .tmp/obj/main.o
 
-$GXX -o tests/host_test/host_test.exe .tmp/obj/*.o
-echo "BUILD OK -> tests/host_test/host_test.exe"
+$GXX -o "tests/host_test/host_test$EXE" .tmp/obj/*.o
+echo "BUILD OK -> tests/host_test/host_test$EXE"

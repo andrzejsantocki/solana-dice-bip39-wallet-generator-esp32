@@ -128,6 +128,52 @@ int main() {
   }
   printf("NFKD: %d vectors checked\n", NFKD_VECTOR_COUNT);
 
+  // 5) Von Neumann dice pipeline: transcript -> entropy -> fingerprint -> wallet
+  {
+    const VnVector* v = &VN_VECTOR;
+    uint8_t ent[32];
+    size_t bits = wc_vn_extract(v->transcript, strlen(v->transcript), ent);
+    CHECK(bits == 256, "vn bits == 256");
+    char got[129];
+    for (int j = 0; j < 32; ++j) sprintf(got + j * 2, "%02x", ent[j]);
+    CHECK(strcmp(got, v->entropy) == 0, "vn entropy");
+    const char* dom = "DiceWallet audit v1";
+    uint8_t dombuf[64];
+    memcpy(dombuf, dom, strlen(dom));
+    memcpy(dombuf + strlen(dom), ent, 32);
+    uint8_t h[32];
+    sha256_compute(dombuf, strlen(dom) + 32, h);
+    for (int j = 0; j < 32; ++j) sprintf(got + j * 2, "%02x", h[j]);
+    CHECK(strcmp(got, v->fingerprint) == 0, "vn fingerprint");
+    char mnemonic[WC_MNEMONIC_MAX_LEN];
+    wc_mnemonic_from_entropy(ent, mnemonic);
+    CHECK(strcmp(mnemonic, v->mnemonic) == 0, "vn mnemonic");
+    uint8_t seed[64];
+    wc_seed_from_mnemonic(mnemonic, "", seed);
+    char addr[WC_ADDRESS_MAX_LEN];
+    wc_solana_address(seed, addr);
+    CHECK(strcmp(addr, v->address) == 0, "vn address");
+  }
+  printf("VN pipeline: end-to-end vector checked\n");
+
+  // 6) wc_nfkd contract: oversized output must fail, never truncate
+  {
+    char out[4];
+    CHECK(!wc_nfkd("abcdefgh", out, sizeof(out)), "nfkd overflow returns false");
+    CHECK(!wc_nfkd("x", out, 0), "nfkd out_cap==0 returns false");
+  }
+  printf("NFKD contract: overflow rejection checked\n");
+
+  // 7) wc_base58_encode bounds
+  {
+    uint8_t big[41] = {0};
+    char out[8];
+    CHECK(!wc_base58_encode(big, 41, out, sizeof(out)), "base58 len>40 rejected");
+    uint8_t key32[32] = {1};
+    CHECK(!wc_base58_encode(key32, 32, out, sizeof(out)), "base58 out too small rejected");
+  }
+  printf("base58 bounds: rejection checked\n");
+
   if (failures) {
     printf("\n%d FAILURES\n", failures);
     return 1;

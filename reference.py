@@ -58,7 +58,7 @@ def pub_crypto(s32):
     k = Ed25519PrivateKey.from_private_bytes(s32)
     return k.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
 
-results = {"bip39": [], "slip10": [], "solana": [], "nfkd": []}
+results = {"bip39": [], "slip10": [], "solana": [], "nfkd": [], "vn": None}
 
 # ---- BIP39: official vectors (english, 256-bit, passphrase "TREZOR") ----
 tv = json.load(open("tests/vectors.json"))["english"]
@@ -118,6 +118,33 @@ sd2 = seed_from_mnemonic(results["bip39"][0]["mnemonic"], pp2)
 assert sd1 == sd2
 results["nfkd"].append({"passphrase_nfd": pp1, "passphrase_nfc": pp2, "seed": sd1.hex()})
 print("NFKD OK")
+
+# ---- Von Neumann dice pipeline: transcript -> entropy -> fingerprint -> wallet ----
+def vn_extract(rolls: str, cap_bits: int = 256) -> bytes:
+    bits = []
+    for i in range(0, len(rolls) - 1, 2):
+        a, b = rolls[i], rolls[i + 1]
+        if a == b:
+            continue
+        bits.append("1" if a > b else "0")
+        if len(bits) >= cap_bits:
+            break
+    bs = "".join(bits)
+    assert len(bs) == cap_bits
+    return int(bs, 2).to_bytes(cap_bits // 8, "big")
+
+import random
+rng = random.Random(42)
+transcript = "".join(rng.choice("123456") for _ in range(700))
+ent = vn_extract(transcript)
+fp = sha256(b"DiceWallet audit v1" + ent).hex()
+mn = mnemonic_from_entropy(ent)
+sd = seed_from_mnemonic(mn, "")  # empty BIP39 passphrase
+kL_s = solana_keypair(sd)
+addr = base58(pub_pynacl(kL_s))
+results["vn"] = {"transcript": transcript, "entropy": ent.hex(),
+                 "fingerprint": fp, "mnemonic": mn, "address": addr}
+print("VN OK:", len(transcript), "rolls ->", addr)
 
 json.dump(results, open("tests/reference_vectors.json", "w"), indent=1)
 print("ALL REFERENCE VECTORS PASSED -> tests/reference_vectors.json")

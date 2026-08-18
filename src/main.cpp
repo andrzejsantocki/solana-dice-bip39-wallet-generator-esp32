@@ -31,19 +31,28 @@ constexpr uint16_t CYAN = 0x07FF, MINT = 0x57F6, GOLD = 0xFEA0, ROSE = 0xF9B6;
 constexpr uint16_t TEXT = 0xFFFF, MUTED = 0x9CF3, GREEN = 0x4FEA, RED = 0xF986;
 constexpr size_t MAX_ROLLS = 1024;
 
+// ---------------- secret / sensitive state (fixed buffers only) ----------------
 char rolls[MAX_ROLLS];
 size_t rollCount = 0;
-String entropyHex;
-String statusLine = "READY: press one d6 key";
-String lastAssessment = "";
+char entropyHex[65];                     // audit fingerprint (public)
 char passphrase[WC_PASSPHRASE_MAX_LEN] = {0};
+char passphraseConfirm[WC_PASSPHRASE_MAX_LEN] = {0};
 char passphraseNfkd[WC_PASSPHRASE_MAX_LEN] = {0};
 char mnemonic[WC_MNEMONIC_MAX_LEN] = {0};
 char address[WC_ADDRESS_MAX_LEN] = {0};
+char quizBuf[12] = {0};
+char tailBuf[25] = {0};
 uint16_t wordOff[24] = {0};
 uint8_t wordLen[24] = {0};
-size_t passLen = 0;
-bool passInput = false;
+size_t passLen = 0, passLen1 = 0, quizLen = 0;
+uint8_t quizPos[4] = {0};
+uint8_t quizStep = 0;
+bool passInput = false, passConfirmPhase = false;
+bool quizActive = false, backupVerified = false;
+
+// ---------------- UI / non-secret state ----------------
+String statusLine = "READY: press one d6 key";
+String lastAssessment = "";
 uint16_t faceCount[6] = {0};
 uint16_t vnBits = 0, ties = 0, maxStreak = 0;
 uint32_t lastNavMs = 0, lastEnterMs = 0;
@@ -51,11 +60,48 @@ int resultPage = 0;
 bool hasHash = false, showingResult = false, sdOK = false, clearArmed = false, lastReportOK = false, radiosOffOK = false;
 bool waitingRelease = false;
 
+// per-key edge state for typed input (passphrase / quiz)
+uint32_t typeMask[3] = {0, 0, 0};
+bool prevEnterK = false, prevDelK = false;
+
+struct KeyEdges {
+  char added[8];
+  uint8_t addedCount = 0;
+  bool chord = false, enter = false, del = false;
+};
+
 void wipeChars(volatile char* p, size_t n) { for (size_t i = 0; i < n; ++i) p[i] = 0; }
 void wipeBytes(volatile uint8_t* p, size_t n) { for (size_t i = 0; i < n; ++i) p[i] = 0; }
 
+void edgeReset() { memset(typeMask, 0, sizeof(typeMask)); prevEnterK = prevDelK = false; }
+
+void keyEdges(const Keyboard_Class::KeysState& ks, KeyEdges& out) {
+  out = KeyEdges();
+  uint32_t cur[3] = {0, 0, 0};
+  char chars[8]; uint8_t n = 0;
+  for (auto c : ks.word) {
+    if (c >= 0x20 && c <= 0x7E && n < 8) {
+      chars[n++] = c;
+      cur[(uint8_t)c >> 5] |= 1u << ((uint8_t)c & 31);
+    }
+  }
+  for (uint8_t i = 0; i < n; ++i) {
+    uint32_t bit = 1u << ((uint8_t)chars[i] & 31);
+    if (!(typeMask[(uint8_t)chars[i] >> 5] & bit)) out.added[out.addedCount++] = chars[i];
+  }
+  out.chord = out.addedCount > 1;
+  memcpy(typeMask, cur, sizeof(cur));
+  out.enter = ks.enter && !prevEnterK; prevEnterK = ks.enter;
+  out.del = ks.del && !prevDelK; prevDelK = ks.del;
+}
+
 void fillRound(int x, int y, int w, int h, int r, uint16_t color) { M5Cardputer.Display.fillRoundRect(x, y, w, h, r, color); }
 void textAt(int x, int y, const String& s, uint16_t fg = TEXT, uint16_t bg = BG, float size = 1) {
+  M5Cardputer.Display.setTextSize(size);
+  M5Cardputer.Display.setTextColor(fg, bg);
+  M5Cardputer.Display.drawString(s, x, y);
+}
+void textAt(int x, int y, const char* s, uint16_t fg = TEXT, uint16_t bg = BG, float size = 1) {
   M5Cardputer.Display.setTextSize(size);
   M5Cardputer.Display.setTextColor(fg, bg);
   M5Cardputer.Display.drawString(s, x, y);
@@ -68,12 +114,13 @@ void wipeRolls() {
   rollCount = 0;
 }
 
-String rollTail(size_t n) {
-  String out;
+// fills tailBuf with at most 24 most recent rolls (no Arduino String)
+void rollTail(size_t n) {
   size_t start = rollCount > n ? rollCount - n : 0;
-  out.reserve(rollCount - start);
-  for (size_t i = start; i < rollCount; ++i) out += rolls[i];
-  return out;
+  size_t len = rollCount - start;
+  if (len >= sizeof(tailBuf)) len = sizeof(tailBuf) - 1;
+  memcpy(tailBuf, rolls + start, len);
+  tailBuf[len] = 0;
 }
 
 void computeStats() {
@@ -110,6 +157,13 @@ bool assessmentOK(String* why = nullptr) {
   return true;
 }
 
+bool verifyRadios() {
+  bool wifiOff = WiFi.getMode() == WIFI_OFF;
+  auto btStatus = esp_bt_controller_get_status();
+  bool btOff = btStatus != ESP_BT_CONTROLLER_STATUS_ENABLED;
+  return wifiOff && btOff;
+}
+
 void drawHeader() {
   M5Cardputer.Display.fillRect(0, 0, 240, 135, BG);
   for (int i = 0; i < 240; i += 8) M5Cardputer.Display.drawFastVLine(i, 0, 135, (i % 24 == 0) ? 0x0AEE : 0x09AD);
@@ -139,24 +193,37 @@ void drawMain() {
   textAt(15, 86, sdOK ? "SD report enabled" : "SD not mounted", sdOK ? MINT : ROSE, PANEL);
   drawBars();
   fillRound(7, 103, 226, 27, 7, PANEL2); M5Cardputer.Display.drawRoundRect(7, 103, 226, 27, 7, 0x3338);
-  String tail = rollTail(24);
-  textAt(15, 110, tail.length() ? tail : "press one key: 1..6", TEXT, PANEL2);
+  rollTail(24);
+  textAt(15, 110, tailBuf[0] ? tailBuf : "press one key: 1..6", TEXT, PANEL2);
   textAt(15, 121, statusLine, hasHash ? GREEN : MUTED, PANEL2);
 }
 
 void drawPassInput() {
   drawHeader();
   fillRound(7, 29, 226, 66, 8, PANEL); M5Cardputer.Display.drawRoundRect(7, 29, 226, 66, 8, 0x3338);
-  textAt(15, 37, "BIP39 PASSPHRASE", GOLD, PANEL);
-  textAt(15, 51, "Empty = default.", TEXT, PANEL);
-  textAt(15, 63, "NFKD normalized.", MUTED, PANEL);
-  textAt(15, 77, "Changes every address.", TEXT, PANEL);
-  String mask = "";
-  for (size_t i = 0; i < passLen; ++i) mask += '*';
-  textAt(15, 90, mask.length() ? mask : "<empty>", CYAN, BG);
+  textAt(15, 37, passConfirmPhase ? "RE-ENTER PASSPHRASE" : "BIP39 PASSPHRASE", GOLD, PANEL);
+  textAt(15, 51, "ASCII only, NFKD-normalized.", TEXT, PANEL);
+  textAt(15, 63, "Empty = default wallet.", MUTED, PANEL);
+  textAt(15, 77, passConfirmPhase ? "Must match first entry." : "Entered twice, masked.", TEXT, PANEL);
+  char maskBuf[WC_PASSPHRASE_MAX_LEN];
+  size_t showLen = passLen < sizeof(maskBuf) - 1 ? passLen : sizeof(maskBuf) - 1;
+  memset(maskBuf, '*', showLen); maskBuf[showLen] = 0;
+  textAt(15, 90, showLen ? maskBuf : "<empty>", CYAN, BG);
   fillRound(7, 103, 226, 27, 7, PANEL2); M5Cardputer.Display.drawRoundRect(7, 103, 226, 27, 7, 0x3338);
   textAt(15, 110, "len " + String(passLen) + "/" + String(WC_PASSPHRASE_MAX_LEN - 1), MUTED, PANEL2);
-  textAt(15, 121, "Enter=confirm  Del=" + String(passLen ? "backspace" : "cancel"), TEXT, PANEL2);
+  textAt(15, 121, "Enter=confirm  Del=" + String(passLen ? "backspace" : (passConfirmPhase ? "edit" : "cancel")), TEXT, PANEL2);
+}
+
+void drawQuiz() {
+  drawHeader();
+  fillRound(7, 29, 226, 66, 8, PANEL); M5Cardputer.Display.drawRoundRect(7, 29, 226, 66, 8, 0x3338);
+  textAt(15, 37, "BACKUP CHECK " + String(quizStep + 1) + "/4", GOLD, PANEL);
+  textAt(15, 51, "Type word #" + String(quizPos[quizStep] + 1), TEXT, PANEL);
+  textAt(15, 65, "then press Enter.", MUTED, PANEL);
+  textAt(15, 81, quizBuf, CYAN, BG);
+  fillRound(7, 103, 226, 27, 7, PANEL2); M5Cardputer.Display.drawRoundRect(7, 103, 226, 27, 7, 0x3338);
+  textAt(15, 110, statusLine, MUTED, PANEL2);
+  textAt(15, 121, "Enter=check  Del=" + String(quizLen ? "backspace" : "cancel"), TEXT, PANEL2);
 }
 
 void drawResult() {
@@ -167,33 +234,43 @@ void drawResult() {
   if (resultPage == PAGE_FINGERPRINT) {
     textAt(18, 48, "1) SHA256 FINGERPRINT", GREEN, PANEL);
     M5Cardputer.Display.setTextSize(2); M5Cardputer.Display.setTextColor(CYAN, PANEL);
-    M5Cardputer.Display.drawString("1|" + entropyHex.substring(0, 16), 12, 61);
-    M5Cardputer.Display.drawString("2|" + entropyHex.substring(16, 32), 12, 77);
-    M5Cardputer.Display.drawString("3|" + entropyHex.substring(32, 48), 12, 93);
-    M5Cardputer.Display.drawString("4|" + entropyHex.substring(48, 64), 12, 109);
+    char fl[20];
+    snprintf(fl, sizeof(fl), "1|%.16s", entropyHex); M5Cardputer.Display.drawString(fl, 12, 61);
+    snprintf(fl, sizeof(fl), "2|%.16s", entropyHex + 16); M5Cardputer.Display.drawString(fl, 12, 77);
+    snprintf(fl, sizeof(fl), "3|%.16s", entropyHex + 32); M5Cardputer.Display.drawString(fl, 12, 93);
+    snprintf(fl, sizeof(fl), "4|%.16s", entropyHex + 48); M5Cardputer.Display.drawString(fl, 12, 109);
   } else if (resultPage >= PAGE_MNEMONIC_FIRST && resultPage < PAGE_MNEMONIC_FIRST + PAGE_MNEMONIC_COUNT) {
     uint8_t base = (resultPage - PAGE_MNEMONIC_FIRST) * 3;
     textAt(18, 46, "MNEMONIC " + String(base + 1) + "-" + String(base + 3) + " / 24", GREEN, PANEL);
     for (int k = 0; k < 3; ++k) {
       uint16_t i = base + k;
       if (i >= 24) break;
-      String w = String(i + 1) + ". " + String(mnemonic + wordOff[i]).substring(0, wordLen[i]);
-      textAt(18, 60 + k * 14, w, TEXT, PANEL);
+      char wordLine[48];
+      snprintf(wordLine, sizeof(wordLine), "%u. %.*s", i + 1, (int)wordLen[i], mnemonic + wordOff[i]);
+      textAt(18, 60 + k * 14, wordLine, TEXT, PANEL);
     }
-    textAt(18, 108, "Write these words down.", ROSE, PANEL);
+    textAt(18, 108, backupVerified ? "Backup verified." : "Write words down. Enter=check", backupVerified ? GREEN : ROSE, PANEL);
   } else if (resultPage == PAGE_PASSPHRASE) {
     textAt(18, 50, "3) PASSPHRASE", GOLD, PANEL);
-    textAt(18, 64, passLen ? "set (never shown)" : "empty (default)", TEXT, PANEL);
+    textAt(18, 64, passLen1 ? "set (never shown)" : "empty (default)", TEXT, PANEL);
     textAt(18, 78, "Changes every address.", TEXT, PANEL);
     textAt(18, 96, "Lose it => funds lost.", ROSE, PANEL);
-    textAt(18, 108, "Default empty for restore.", MUTED, PANEL);
+    textAt(18, 108, "ASCII-only input.", MUTED, PANEL);
   } else if (resultPage == PAGE_ADDRESS) {
-    textAt(18, 46, "4) SOLANA ADDRESS", CYAN, PANEL);
-    textAt(18, 60, String(address).substring(0, 16), TEXT, PANEL);
-    textAt(18, 72, String(address).substring(16, 32), TEXT, PANEL);
-    textAt(18, 84, String(address).substring(32), TEXT, PANEL);
-    textAt(18, 102, "Path m/44'/501'/0'/0'", MUTED, PANEL);
-    textAt(18, 112, "Solflare / Phantom compatible", MUTED, PANEL);
+    if (!backupVerified) {
+      textAt(18, 46, "4) SOLANA ADDRESS", CYAN, PANEL);
+      textAt(18, 62, "LOCKED - verify backup first.", ROSE, PANEL);
+      textAt(18, 76, "Go to mnemonic pages,", TEXT, PANEL);
+      textAt(18, 88, "press Enter, type 4 words.", TEXT, PANEL);
+    } else {
+      textAt(18, 46, "4) SOLANA ADDRESS", CYAN, PANEL);
+      char al[17];
+      snprintf(al, sizeof(al), "%.16s", address); textAt(18, 60, al, TEXT, PANEL);
+      snprintf(al, sizeof(al), "%.16s", address + 16); textAt(18, 72, al, TEXT, PANEL);
+      snprintf(al, sizeof(al), "%.16s", address + 32); textAt(18, 84, al, TEXT, PANEL);
+      textAt(18, 102, "Path m/44'/501'/0'/0'", MUTED, PANEL);
+      textAt(18, 112, passLen1 ? "passphrase restore: verify" : "Phantom path-compatible", passLen1 ? ROSE : MUTED, PANEL);
+    }
   } else if (resultPage == PAGE_SANITY) {
     textAt(18, 50, ok ? "5) SANITY: OK" : "5) SANITY: BLOCK", ok ? GREEN : RED, PANEL);
     textAt(18, 64, why.substring(0, 34), ok ? GREEN : ROSE, PANEL);
@@ -222,9 +299,11 @@ void writeReport(bool ok, const String& why) {
   f.println("ties=" + String(ties));
   f.println("max_streak=" + String(maxStreak));
   f.println("faces=" + String(faceCount[0]) + "," + String(faceCount[1]) + "," + String(faceCount[2]) + "," + String(faceCount[3]) + "," + String(faceCount[4]) + "," + String(faceCount[5]));
-  f.println("audit_fingerprint_sha256=" + entropyHex);
+  f.println("audit_fingerprint_sha256=" + String(entropyHex));
   f.println("address=" + String(address[0] ? address : "n/a"));
-  f.println("passphrase_set=" + String(passLen > 0 ? "yes" : "no"));
+  f.println(passLen1 > 0 ? "passphrase_set=yes" : "passphrase_set=no");
+  f.println("passphrase_ascii_only=yes");
+  f.println(backupVerified ? "backup_verified=yes" : "backup_verified=no");
   f.println("roll_transcript_saved=false");
   f.println("raw_vn_entropy_saved=false");
   f.println("mnemonic_saved=false");
@@ -249,15 +328,18 @@ void parseMnemonicWords() {
 }
 
 void buildWallet() {
-  String why; bool ok = assessmentOK(&why);
-  if (!ok) { hasHash = false; statusLine = "need 256 VN bits"; entropyHex = ""; resultPage = PAGE_SANITY; lastAssessment = why; writeReport(false, why); drawResult(); return; }
-
-  uint8_t bytes[32] = {0}; uint16_t bit = 0;
-  for (size_t i = 1; i < rollCount && bit < 256; i += 2) {
-    char a = rolls[i - 1], b = rolls[i]; if (a == b) continue;
-    if (a > b) bytes[bit / 8] |= (1 << (7 - (bit % 8)));
-    bit++;
+  if (!verifyRadios()) {
+    radiosOffOK = false; hasHash = false;
+    statusLine = "RADIO STATE ERROR - blocked";
+    drawMain();
+    return;
   }
+  String why; bool ok = assessmentOK(&why);
+  if (!ok) { hasHash = false; statusLine = "need 256 VN bits"; entropyHex[0] = 0; resultPage = PAGE_SANITY; lastAssessment = why; writeReport(false, why); drawResult(); return; }
+
+  uint8_t bytes[32];
+  size_t bits = wc_vn_extract(rolls, rollCount, bytes);
+  if (bits < 256) { statusLine = "need 256 VN bits"; hasHash = false; drawMain(); return; }
   uint8_t hash[32];
   const char domain[] = "DiceWallet audit v1";
   mbedtls_sha256_context ctx;
@@ -267,8 +349,17 @@ void buildWallet() {
   mbedtls_sha256_update(&ctx, bytes, 32);
   mbedtls_sha256_finish(&ctx, hash);
   mbedtls_sha256_free(&ctx);
-  entropyHex = ""; const char* hx = "0123456789abcdef";
-  for (uint8_t b : hash) { entropyHex += hx[b >> 4]; entropyHex += hx[b & 15]; }
+  const char* hx = "0123456789abcdef";
+  for (int i = 0; i < 32; ++i) { entropyHex[i * 2] = hx[hash[i] >> 4]; entropyHex[i * 2 + 1] = hx[hash[i] & 15]; }
+  entropyHex[64] = 0;
+
+  // deterministic backup-quiz positions from the audit fingerprint
+  for (uint8_t k = 0; k < 4;) {
+    uint8_t p = hash[k * 5] % 24;
+    bool dup = false;
+    for (uint8_t j = 0; j < k; ++j) if (quizPos[j] == p) dup = true;
+    if (!dup) quizPos[k++] = p;
+  }
 
   if (!wc_nfkd(passphrase, passphraseNfkd, sizeof(passphraseNfkd))) {
     statusLine = "passphrase not valid UTF-8";
@@ -286,8 +377,105 @@ void buildWallet() {
   wipeBytes(hash, 32);
 
   passInput = false;
-  hasHash = true; statusLine = "wallet generated"; resultPage = PAGE_FINGERPRINT; lastAssessment = why;
+  backupVerified = false;
+  quizActive = false;
+  quizStep = 0;
+  quizLen = 0;
+  memset(quizBuf, 0, sizeof(quizBuf));
+  waitingRelease = true;
+  hasHash = true; statusLine = "backup: verify words (Enter)"; resultPage = PAGE_FINGERPRINT; lastAssessment = why;
   writeReport(true, why); drawResult();
+}
+
+void startPassphrase() {
+  wipeChars(passphrase, sizeof(passphrase));
+  wipeChars(passphraseConfirm, sizeof(passphraseConfirm));
+  passLen = 0; passLen1 = 0;
+  passConfirmPhase = false;
+  edgeReset();
+  passInput = true; showingResult = false; hasHash = false; clearArmed = false;
+  statusLine = "passphrase: Enter=confirm";
+  drawPassInput();
+}
+
+void handlePassInput(const Keyboard_Class::KeysState& ks) {
+  KeyEdges e; keyEdges(ks, e);
+  if (e.enter) {
+    if (passConfirmPhase) {
+      if (memcmp(passphrase, passphraseConfirm, WC_PASSPHRASE_MAX_LEN) == 0) {
+        passLen = passLen1;
+        passInput = false;
+        buildWallet();
+        return;
+      }
+      wipeChars(passphrase, sizeof(passphrase));
+      wipeChars(passphraseConfirm, sizeof(passphraseConfirm));
+      passLen = 0; passLen1 = 0; passConfirmPhase = false;
+      statusLine = "MISMATCH - enter again";
+      drawPassInput();
+      return;
+    }
+    if (passLen == 0) { passInput = false; passLen1 = 0; buildWallet(); return; }
+    passLen1 = passLen; passLen = 0;
+    passConfirmPhase = true;
+    statusLine = "re-enter to confirm";
+    drawPassInput();
+    return;
+  }
+  if (e.del) {
+    char* buf = passConfirmPhase ? passphraseConfirm : passphrase;
+    if (passLen) { buf[--passLen] = 0; statusLine = "char erased"; drawPassInput(); return; }
+    if (passConfirmPhase) { passConfirmPhase = false; passLen = passLen1; statusLine = "edit first entry"; drawPassInput(); return; }
+    passInput = false; statusLine = "passphrase cancelled"; drawMain(); return;
+  }
+  if (e.addedCount == 1) {
+    char* buf = passConfirmPhase ? passphraseConfirm : passphrase;
+    if (passLen < WC_PASSPHRASE_MAX_LEN - 1) { buf[passLen++] = e.added[0]; statusLine = "passphrase updated"; }
+    else statusLine = "passphrase too long";
+    drawPassInput();
+    return;
+  }
+  if (e.chord) { statusLine = "one key at a time"; drawPassInput(); return; }
+}
+
+void handleQuiz(const Keyboard_Class::KeysState& ks) {
+  KeyEdges e; keyEdges(ks, e);
+  if (e.enter) {
+    uint8_t pos = quizPos[quizStep];
+    bool match = quizLen == wordLen[pos] && memcmp(quizBuf, mnemonic + wordOff[pos], wordLen[pos]) == 0;
+    if (!match) {
+      quizStep = 0; quizLen = 0; memset(quizBuf, 0, sizeof(quizBuf));
+      statusLine = "WRONG - re-check your backup";
+      drawQuiz();
+      return;
+    }
+    quizStep++; quizLen = 0; memset(quizBuf, 0, sizeof(quizBuf));
+    if (quizStep == 4) {
+      quizActive = false; backupVerified = true;
+      statusLine = "BACKUP VERIFIED";
+      drawResult();
+      String why; bool ok = assessmentOK(&why);
+      writeReport(ok, "BACKUP VERIFIED: " + why);
+      return;
+    }
+    statusLine = "correct - next word";
+    drawQuiz();
+    return;
+  }
+  if (e.del) {
+    if (quizLen) { quizBuf[--quizLen] = 0; statusLine = "char erased"; }
+    else { quizActive = false; statusLine = "backup check cancelled"; drawResult(); return; }
+    drawQuiz();
+    return;
+  }
+  if (e.addedCount == 1) {
+    char c = e.added[0];
+    if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+    if (c >= 'a' && c <= 'z' && quizLen < sizeof(quizBuf) - 1) { quizBuf[quizLen++] = c; }
+    drawQuiz();
+    return;
+  }
+  if (e.chord) { statusLine = "one key at a time"; drawQuiz(); return; }
 }
 
 void acceptRoll(char c) {
@@ -303,16 +491,20 @@ void acceptRoll(char c) {
 void clearEverything() {
   wipeRolls();
   wipeChars(passphrase, sizeof(passphrase));
+  wipeChars(passphraseConfirm, sizeof(passphraseConfirm));
   wipeChars(passphraseNfkd, sizeof(passphraseNfkd));
   wipeChars(mnemonic, sizeof(mnemonic));
   wipeChars(address, sizeof(address));
-  passLen = 0;
-  passInput = false;
-  entropyHex = "";
+  memset(quizBuf, 0, sizeof(quizBuf));
+  passLen = 0; passLen1 = 0; quizLen = 0;
+  passInput = false; passConfirmPhase = false;
+  quizActive = false; backupVerified = false;
+  entropyHex[0] = 0;
   hasHash = false;
   showingResult = false;
   clearArmed = false;
   waitingRelease = false;
+  edgeReset();
   statusLine = "cleared";
   resultPage = 0;
   drawMain();
@@ -326,17 +518,16 @@ void initSD() {
 
 void disableRadios() {
   WiFi.disconnect(true, true);
-  bool wifiModeOff = WiFi.mode(WIFI_OFF);
+  WiFi.mode(WIFI_OFF);
   esp_wifi_stop();
   btStop();
   esp_bt_controller_disable();
-  auto btStatus = esp_bt_controller_get_status();
-  radiosOffOK = wifiModeOff && WiFi.getMode() == WIFI_OFF && btStatus != ESP_BT_CONTROLLER_STATUS_ENABLED;
 }
 
 void setup() {
-  disableRadios();
   auto cfg = M5.config(); M5Cardputer.begin(cfg, true); M5Cardputer.Display.setRotation(1); M5Cardputer.Display.setFont(&fonts::Font0);
+  disableRadios();
+  radiosOffOK = verifyRadios();
   wipeRolls();
   initSD(); drawMain();
 }
@@ -344,10 +535,11 @@ void setup() {
 void loop() {
   M5Cardputer.update();
   bool pressed = M5Cardputer.Keyboard.isPressed();
-  if (!pressed) { waitingRelease = false; return; }
-  if (waitingRelease) return;
-
   Keyboard_Class::KeysState ks = M5Cardputer.Keyboard.keysState();
+  if (!pressed) { waitingRelease = false; edgeReset(); return; }
+  if (passInput) { handlePassInput(ks); return; }
+  if (quizActive) { handleQuiz(ks); return; }
+  if (waitingRelease) return;
   waitingRelease = true;
 
   bool yes = false, no = false, prev = false, next = false;
@@ -371,23 +563,6 @@ void loop() {
     return;
   }
 
-  if (passInput) {
-    uint32_t now = millis();
-    if (ks.enter && now - lastEnterMs > 500) { lastEnterMs = now; buildWallet(); return; }
-    if (ks.del) {
-      if (passLen) { passphrase[--passLen] = 0; statusLine = "char erased"; }
-      else { passInput = false; statusLine = "passphrase cancelled"; drawMain(); return; }
-      drawPassInput();
-      return;
-    }
-    bool added = false;
-    for (auto c : ks.word) {
-      if (c >= 0x20 && c <= 0x7E && passLen < WC_PASSPHRASE_MAX_LEN - 1) { passphrase[passLen++] = c; added = true; }
-    }
-    if (added) { statusLine = "passphrase updated"; drawPassInput(); }
-    return;
-  }
-
   if (showingResult && diceCount == 1 && !prev && !next) { acceptRoll(dice); return; }
 
   uint32_t now = millis();
@@ -395,6 +570,19 @@ void loop() {
     resultPage = prev ? (resultPage + PAGE_COUNT - 1) % PAGE_COUNT : (resultPage + 1) % PAGE_COUNT;
     lastNavMs = now;
     drawResult();
+    return;
+  }
+
+  if (showingResult && ks.enter && now - lastEnterMs > 500 &&
+      resultPage >= PAGE_MNEMONIC_FIRST && resultPage < PAGE_MNEMONIC_FIRST + PAGE_MNEMONIC_COUNT) {
+    lastEnterMs = now;
+    if (!backupVerified) {
+      quizActive = true; quizStep = 0; quizLen = 0;
+      memset(quizBuf, 0, sizeof(quizBuf));
+      edgeReset();
+      statusLine = "type the word shown";
+      drawQuiz();
+    }
     return;
   }
 
@@ -407,8 +595,17 @@ void loop() {
 
   if (ks.enter && now - lastEnterMs > 500) {
     lastEnterMs = now;
-    if (vnBits >= 256) { passInput = true; showingResult = false; hasHash = false; statusLine = "type passphrase, Enter=confirm"; drawPassInput(); }
-    else { buildWallet(); }
+    if (vnBits >= 256) {
+      if (!verifyRadios()) {
+        radiosOffOK = false;
+        statusLine = "RADIO STATE ERROR - blocked";
+        drawMain();
+        return;
+      }
+      startPassphrase();
+    } else {
+      buildWallet();
+    }
     return;
   }
 

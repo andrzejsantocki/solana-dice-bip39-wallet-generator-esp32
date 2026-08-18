@@ -1,8 +1,15 @@
 #include "wallet_core.h"
+#include <stdlib.h>
 #include <string.h>
 #include "../bip39/wordlist.h"
 #include "../utf8proc/utf8proc.h"
 #include "../ed25519/ed25519.h"
+
+// ---------------- secure wipe ----------------
+void wc_secure_zero(void* p, size_t n) {
+  volatile uint8_t* v = (volatile uint8_t*)p;
+  while (n--) *v++ = 0;
+}
 
 // ---------------- HMAC-SHA512 ----------------
 static void hmac_sha512(const uint8_t* key, size_t keylen,
@@ -14,6 +21,7 @@ static void hmac_sha512(const uint8_t* key, size_t keylen,
     uint8_t h[64];
     wc_sha512(key, keylen, h);
     memcpy(k, h, 64);
+    wc_secure_zero(h, sizeof(h));
     klen = 64;
   } else {
     memcpy(k, key, keylen);
@@ -30,6 +38,26 @@ static void hmac_sha512(const uint8_t* key, size_t keylen,
   memcpy(inner, opad, 128);
   memcpy(inner + 128, h, 64);
   wc_sha512(inner, 192, out);
+
+  wc_secure_zero(k, sizeof(k));
+  wc_secure_zero(ipad, sizeof(ipad));
+  wc_secure_zero(opad, sizeof(opad));
+  wc_secure_zero(inner, sizeof(inner));
+  wc_secure_zero(h, sizeof(h));
+}
+
+// ---------------- Von Neumann extraction ----------------
+size_t wc_vn_extract(const char* rolls, size_t roll_count, uint8_t out[32]) {
+  memset(out, 0, 32);
+  size_t bit = 0;
+  for (size_t i = 1; i < roll_count && bit < 256; i += 2) {
+    char a = rolls[i - 1], b = rolls[i];
+    if (a < '1' || a > '6' || b < '1' || b > '6') continue;
+    if (a == b) continue;
+    if (a > b) out[bit / 8] |= (uint8_t)(1 << (7 - (bit % 8)));
+    bit++;
+  }
+  return bit;
 }
 
 // ---------------- BIP39 ----------------
@@ -53,6 +81,8 @@ void wc_mnemonic_from_entropy(const uint8_t ent[32], char* out) {
     if (w != 23) out[pos++] = ' ';
   }
   out[pos] = 0;
+  wc_secure_zero(cs, sizeof(cs));
+  wc_secure_zero(bits, sizeof(bits));
 }
 
 // PBKDF2-HMAC-SHA512, single block (dkLen=64 == SHA512 block size).
@@ -74,20 +104,27 @@ void wc_seed_from_mnemonic(const char* mnemonic, const char* passphrase_nfkd,
     for (int j = 0; j < 64; ++j) T[j] ^= U[j];
   }
   memcpy(seed, T, 64);
+  wc_secure_zero(salt, sizeof(salt));
+  wc_secure_zero(U, sizeof(U));
+  wc_secure_zero(T, sizeof(T));
 }
 
 // ---------------- NFKD ----------------
 bool wc_nfkd(const char* in, char* out, size_t out_cap) {
+  if (out_cap == 0) return false;
   utf8proc_uint8_t* res = NULL;
   utf8proc_ssize_t n = utf8proc_map(
       (const utf8proc_uint8_t*)in, 0, &res,
       (utf8proc_option_t)(UTF8PROC_NULLTERM | UTF8PROC_STABLE |
                           UTF8PROC_DECOMPOSE | UTF8PROC_COMPAT));
-  if (n < 0) { if (res) free(res); return false; }
-  size_t copy = (size_t)n;
-  if (copy >= out_cap) copy = out_cap - 1;
-  memcpy(out, res, copy);
-  out[copy] = 0;
+  if (n < 0 || (size_t)n >= out_cap) {
+    if (res) wc_secure_zero(res, (size_t)n > 0 ? (size_t)n : 0);
+    if (res) free(res);
+    return false;
+  }
+  memcpy(out, res, (size_t)n);
+  out[(size_t)n] = 0;  // utf8proc_map returns payload length only — terminate explicitly
+  wc_secure_zero(res, (size_t)n);
   free(res);
   return true;
 }
@@ -99,6 +136,7 @@ void wc_slip10_master(const uint8_t* seed, size_t seed_len, uint8_t kL[32],
   hmac_sha512((const uint8_t*)"ed25519 seed", 12, seed, seed_len, I);
   memcpy(kL, I, 32);
   memcpy(chaincode, I + 32, 32);
+  wc_secure_zero(I, sizeof(I));
 }
 
 void wc_slip10_child(const uint8_t kL[32], const uint8_t chaincode[32],
@@ -115,6 +153,8 @@ void wc_slip10_child(const uint8_t kL[32], const uint8_t chaincode[32],
   hmac_sha512(chaincode, 32, data, 37, I);
   memcpy(out_kL, I, 32);
   memcpy(out_cc, I + 32, 32);
+  wc_secure_zero(data, sizeof(data));
+  wc_secure_zero(I, sizeof(I));
 }
 
 // ---------------- Solana ----------------
@@ -127,21 +167,27 @@ void wc_solana_private_seed(const uint8_t seed[64], uint8_t kL[32]) {
     wc_slip10_child(kL, cc, path[i], nkL, ncc);
     memcpy(kL, nkL, 32);
     memcpy(cc, ncc, 32);
+    wc_secure_zero(nkL, sizeof(nkL));
+    wc_secure_zero(ncc, sizeof(ncc));
   }
+  wc_secure_zero(cc, sizeof(cc));
 }
 
 void wc_ed25519_pubkey(const uint8_t kL[32], uint8_t pub[32]) {
   unsigned char priv_tmp[64];
   ed25519_create_keypair(pub, priv_tmp, kL);
+  wc_secure_zero(priv_tmp, sizeof(priv_tmp));
 }
 
-void wc_base58_encode(const uint8_t* data, size_t len, char* out) {
+bool wc_base58_encode(const uint8_t* data, size_t len, char* out,
+                      size_t out_cap) {
+  if (len == 0 || len > 40 || out_cap < 2) return false;
   static const char* AL =
       "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
   size_t zeros = 0;
   while (zeros < len && data[zeros] == 0) zeros++;
 
-  uint8_t buf[40] = {0};
+  uint8_t buf[40];
   memcpy(buf, data, len);
   char tmp[50];
   size_t tpos = 0;
@@ -159,15 +205,19 @@ void wc_base58_encode(const uint8_t* data, size_t len, char* out) {
     if (!allzero) tmp[tpos++] = AL[rem];
     while (start < len && buf[start] == 0) start++;
   }
+  if (zeros + tpos + 1 > out_cap) return false;
   size_t o = 0;
   for (size_t z = 0; z < zeros; ++z) out[o++] = '1';
   while (tpos) out[o++] = tmp[--tpos];
   out[o] = 0;
+  return true;
 }
 
 void wc_solana_address(const uint8_t seed[64], char addr[WC_ADDRESS_MAX_LEN]) {
   uint8_t kL[32], pub[32];
   wc_solana_private_seed(seed, kL);
   wc_ed25519_pubkey(kL, pub);
-  wc_base58_encode(pub, 32, addr);
+  wc_base58_encode(pub, 32, addr, WC_ADDRESS_MAX_LEN);
+  wc_secure_zero(kL, sizeof(kL));
+  wc_secure_zero(pub, sizeof(pub));
 }
