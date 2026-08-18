@@ -7,8 +7,7 @@ on:
   pull_request:
   workflow_dispatch:
 
-permissions:
-  contents: write
+permissions: {}
 
 jobs:
   host-tests:
@@ -52,6 +51,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: [host-tests, platformio]
     if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
     steps:
       - name: Download CI-built firmware
         uses: actions/download-artifact@65a9edc5881444af0b9093a5e628f2fe47ea3ca9

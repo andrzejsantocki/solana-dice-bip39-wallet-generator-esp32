@@ -19,9 +19,15 @@ void wc_secure_zero(void* p, size_t n);
 // Returns number of bits written (max 256).
 size_t wc_vn_extract(const char* rolls, size_t roll_count, uint8_t out[32]);
 
-// Raw dice extraction (bias NOT removed): 3 bits per roll (1..6 -> 0..5),
-// first 256 bits only. Requires ceil(256/3) = 86 valid rolls.
+// Raw dice extraction (bias NOT removed): exact base-6 to binary conversion
+// of 100 rolls (6^100 > 2^256), top 32 bytes taken. Fair dice: ~258.5 bits
+// of source entropy for 256 output bits. Returns 256 on success, 0 if fewer
+// than 100 valid rolls.
 size_t wc_raw_extract(const char* rolls, size_t roll_count, uint8_t out[32]);
+
+// Deterministic backup-quiz positions: 4 distinct indices 0..23 from
+// hash bytes (candidate index always advances — cannot loop forever).
+void wc_quiz_positions(const uint8_t hash[32], uint8_t pos[4]);
 
 // ---- keyboard edge parsing (shared with firmware UI, host-tested) ----
 // Printable ASCII 0x20..0x7E needs 4x32-bit buckets (0x7E >> 5 == 3).

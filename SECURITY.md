@@ -32,8 +32,10 @@
 ## Passphrase input
 
 - ASCII-only (0x20–0x7E), accepted one key at a time via per-key edge detection; chorded/overlapping keys are rejected with a visible warning, never silently merged or dropped.
-- Non-empty passphrases are entered twice; entries are compared in full before any derivation runs. BIP39 has no passphrase checksum — double-entry is the only typo defense.
+- Non-empty passphrases are entered twice; entries are compared in full with a constant-time no-early-exit XOR (wc_ct_equal) before any derivation runs. BIP39 has no passphrase checksum — double-entry is the only typo defense.
 - Empty passphrase (default) skips confirmation.
+- Typed-input modes (passphrase, quiz) ignore the keypress that opened them until it is fully released — a held Enter can never double as the first confirmation.
+- Passphrase, its confirmation copy, and the normalized copy are wiped immediately after seed derivation; only the set/empty flag survives.
 
 ## Entropy mode fork
 
@@ -41,10 +43,14 @@ At boot the device offers two extraction modes:
 
 - Von Neumann (default): roll pairs with equal values are dropped, the rest
   produce unbiased bits. Recommended. ~615 rolls typical for 256 bits.
-- Raw dice: each roll contributes 3 bits directly (1..6 → 0..5). 86 rolls
-  suffice, but any physical bias of the dice passes straight into the
-  entropy. The UI marks this "Not recommended" and the sanity page flags it.
-  The SD report records the chosen mode (`entropy_mode=`).
+- Raw dice: 100 rolls converted by exact base-6 → binary (6^100 > 2^256).
+  Fair dice contribute ~258.5 bits of source entropy for the 256-bit value;
+  any physical bias of the dice passes straight into the entropy and reduces
+  that figure. The UI marks this "Not recommended" and the sanity page flags
+  it. The SD report records the chosen mode (`entropy_mode=`) plus
+  mode-specific fields (VN: `vn_bits`, `ties`, `used_vn_bits`,
+  `surplus_vn_bits`; raw: `raw_dice_rolls_used=100`,
+  `raw_dice_source_entropy_bits`).
 
 ## Radio posture
 

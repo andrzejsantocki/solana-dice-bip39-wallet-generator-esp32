@@ -62,18 +62,46 @@ size_t wc_vn_extract(const char* rolls, size_t roll_count, uint8_t out[32]) {
 
 // ---------------- Raw dice extraction (bias kept) ----------------
 size_t wc_raw_extract(const char* rolls, size_t roll_count, uint8_t out[32]) {
+  // Exact base-6 to binary: acc = sum face*6^i over 100 rolls; 6^100 < 2^259
+  // so a 33-byte accumulator suffices; top 32 bytes form the entropy.
+  const size_t RAW_ROLLS = 100;
   memset(out, 0, 32);
-  size_t bit = 0;
-  for (size_t i = 0; i < roll_count && bit < 256; ++i) {
+  uint8_t acc[33] = {0};
+  size_t accBytes = 1;
+  size_t used = 0;
+  for (size_t i = 0; i < roll_count && used < RAW_ROLLS; ++i) {
     char c = rolls[i];
     if (c < '1' || c > '6') continue;
-    uint8_t v = (uint8_t)(c - '1');  // 0..5, injective: raw bias passes through unchanged
-    for (int b = 2; b >= 0 && bit < 256; --b) {
-      if ((v >> b) & 1) out[bit / 8] |= (uint8_t)(1 << (7 - (bit % 8)));
-      bit++;
+    uint32_t carry = (uint32_t)(c - '1');
+    for (size_t b = 0; b < accBytes; ++b) {
+      uint32_t t = (uint32_t)acc[b] * 6 + carry;
+      acc[b] = (uint8_t)t;
+      carry = t >> 8;
     }
+    if (carry) acc[accBytes++] = (uint8_t)carry;
+    used++;
   }
-  return bit;
+  if (used < RAW_ROLLS) return 0;
+  for (size_t i = 0; i < 32; ++i) out[i] = acc[accBytes - 1 - i];
+  wc_secure_zero(acc, sizeof(acc));
+  return 256;
+}
+
+// ---------------- quiz positions ----------------
+void wc_quiz_positions(const uint8_t hash[32], uint8_t pos[4]) {
+  uint8_t k = 0;
+  for (uint8_t candidate = 0; candidate < 32 && k < 4; ++candidate) {
+    uint8_t p = hash[candidate] % 24;
+    bool dup = false;
+    for (uint8_t j = 0; j < k; ++j) if (pos[j] == p) dup = true;
+    if (!dup) pos[k++] = p;
+  }
+  // Deterministic fallback: first unused indices ascending (guarantees 4).
+  for (uint8_t v = 0; v < 24 && k < 4; ++v) {
+    bool used = false;
+    for (uint8_t j = 0; j < k; ++j) if (pos[j] == v) used = true;
+    if (!used) pos[k++] = v;
+  }
 }
 
 // ---------------- keyboard edge parsing ----------------

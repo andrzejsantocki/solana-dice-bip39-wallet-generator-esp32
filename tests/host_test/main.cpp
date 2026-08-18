@@ -139,9 +139,10 @@ int main() {
     CHECK(strcmp(got, v->entropy) == 0, "vn entropy");
     uint8_t raw[32];
     size_t rawbits = wc_raw_extract(v->transcript, strlen(v->transcript), raw);
-    CHECK(rawbits == 256, "raw bits == 256");
+    CHECK(rawbits == 256, "raw bits == 256 (100 rolls)");
     for (int j = 0; j < 32; ++j) sprintf(got + j * 2, "%02x", raw[j]);
     CHECK(strcmp(got, v->raw_entropy) == 0, "raw entropy");
+    CHECK(wc_raw_extract(v->transcript, 99, raw) == 0, "raw <100 rolls rejected");
     const char* dom = "DiceWallet audit v1";
     uint8_t dombuf[64];
     memcpy(dombuf, dom, strlen(dom));
@@ -236,6 +237,38 @@ int main() {
     CHECK(!wc_ct_equal(x, y, 64), "ct_equal: last-byte differs");
   }
   printf("wc_ct_equal: checked\n");
+
+  // 10) wc_quiz_positions: distinct, in-range, terminates on adversarial hash
+  {
+    uint8_t pos[4];
+    uint8_t h[32] = {0};
+    for (int i = 0; i < 32; ++i) h[i] = (uint8_t)(i * 37);
+    wc_quiz_positions(h, pos);
+    bool distinct = true;
+    for (int i = 0; i < 4; ++i) {
+      if (pos[i] >= 24) distinct = false;
+      for (int j = 0; j < i; ++j) if (pos[i] == pos[j]) distinct = false;
+    }
+    CHECK(distinct, "quiz positions distinct and <24");
+    // adversarial: every byte % 24 == 7 — old code looped forever here
+    memset(h, 7, sizeof(h));
+    wc_quiz_positions(h, pos);
+    distinct = true;
+    for (int i = 0; i < 4; ++i) {
+      if (pos[i] >= 24) distinct = false;
+      for (int j = 0; j < i; ++j) if (pos[i] == pos[j]) distinct = false;
+    }
+    CHECK(distinct, "quiz positions survive all-duplicate hash");
+    memset(h, 0x17, sizeof(h));  // all 23s
+    wc_quiz_positions(h, pos);
+    distinct = true;
+    for (int i = 0; i < 4; ++i) {
+      if (pos[i] >= 24) distinct = false;
+      for (int j = 0; j < i; ++j) if (pos[i] == pos[j]) distinct = false;
+    }
+    CHECK(distinct, "quiz positions survive all-identical hash");
+  }
+  printf("wc_quiz_positions: checked\n");
 
   if (failures) {
     printf("\n%d FAILURES\n", failures);

@@ -65,9 +65,12 @@ enum EntMode { MODE_VN = 0, MODE_RAW = 1 };
 EntMode entropyMode = MODE_VN;
 bool modeSelect = true;
 int modeCursor = 0;
+// typed-input modes wait for full key release before processing any event
+bool inputAwaitRelease = false;
+constexpr char FW_VERSION[] = "0.2.0";
 
 bool entropyReady() {
-  return entropyMode == MODE_VN ? vnBits >= 256 : rollCount >= 86;
+  return entropyMode == MODE_VN ? vnBits >= 256 : rollCount >= 100;
 }
 
 // per-key edge state for typed input (passphrase / quiz)
@@ -132,7 +135,7 @@ bool assessmentOK(String* why = nullptr) {
   computeStats();
   String w = "";
   if (!entropyReady()) {
-    w = entropyMode == MODE_VN ? "BLOCK: VN bits <256." : "BLOCK: need 86 rolls.";
+    w = entropyMode == MODE_VN ? "BLOCK: VN bits <256." : "BLOCK: need 100 rolls.";
     if (why) *why = w;
     return false;
   }
@@ -187,9 +190,10 @@ void drawModeSelect() {
   } else {
     textAt(15, 81, "Every roll used directly.", ROSE, PANEL2);
     textAt(15, 93, "Dice bias KEPT in entropy.", ROSE, PANEL2);
-    textAt(15, 105, "86 rolls. Not recommended.", ROSE, PANEL2);
+    textAt(15, 105, "100 rolls. Not recommended.", ROSE, PANEL2);
   }
   textAt(15, 118, "Up/Down: choose  Enter: select", MUTED, BG);
+  textAt(8, 126, FW_VERSION, MUTED, BG);
 }
 
 void drawMain() {
@@ -197,7 +201,7 @@ void drawMain() {
   drawHeader(); computeStats();
   fillRound(7, 29, 118, 66, 8, PANEL); M5Cardputer.Display.drawRoundRect(7, 29, 118, 66, 8, 0x3338);
   textAt(15, 37, "rolls", MUTED, PANEL); textAt(15, 50, String(rollCount), entropyReady() ? GREEN : GOLD, PANEL, 2);
-  textAt(68, 50, entropyMode == MODE_VN ? "VN " + String(vnBits) + "/256" : "RAW " + String(rollCount) + "/86",
+  textAt(68, 50, entropyMode == MODE_VN ? "VN " + String(vnBits) + "/256" : "RAW " + String(rollCount) + "/100",
          entropyReady() ? GREEN : GOLD, PANEL);
   textAt(15, 75, "ties " + String(ties) + "  streak " + String(maxStreak), MUTED, PANEL);
   textAt(15, 86, sdOK ? "SD report enabled" : "SD not mounted", sdOK ? MINT : ROSE, PANEL);
@@ -258,6 +262,7 @@ void drawResult() {
       char wordLine[48];
       snprintf(wordLine, sizeof(wordLine), "%u. %.*s", i + 1, (int)wordLen[i], mnemonic + wordOff[i]);
       textAt(18, 60 + k * 14, wordLine, TEXT, PANEL);
+      wc_secure_zero(wordLine, sizeof(wordLine));
     }
     textAt(18, 108, backupVerified ? "Backup verified." : "Write words down. Enter=check", backupVerified ? GREEN : ROSE, PANEL);
   } else if (resultPage == PAGE_PASSPHRASE) {
@@ -304,9 +309,17 @@ void writeReport(bool ok, const String& why) {
   f.println("--- dice entropy sanity report ---");
   f.println(ok ? "SANITY_OK" : "SANITY_BLOCK");
   f.println(why);
+  f.println("firmware_version=" + String(FW_VERSION));
   f.println("rolls=" + String(rollCount));
-  f.println("vn_bits=" + String(vnBits));
-  f.println("ties=" + String(ties));
+  if (entropyMode == MODE_VN) {
+    f.println("vn_bits=" + String(vnBits));
+    f.println("ties=" + String(ties));
+    f.println("used_vn_bits=256");
+    f.println("surplus_vn_bits=" + String(vnBits > 256 ? vnBits - 256 : 0));
+  } else {
+    f.println("raw_dice_rolls_used=100");
+    f.println("raw_dice_source_entropy_bits=~258.5 (fair dice assumption)");
+  }
   f.println("max_streak=" + String(maxStreak));
   f.println("faces=" + String(faceCount[0]) + "," + String(faceCount[1]) + "," + String(faceCount[2]) + "," + String(faceCount[3]) + "," + String(faceCount[4]) + "," + String(faceCount[5]));
   f.println("audit_fingerprint_sha256=" + String(entropyHex));
@@ -320,8 +333,6 @@ void writeReport(bool ok, const String& why) {
   f.println("raw_vn_entropy_saved=false");
   f.println("mnemonic_saved=false");
   f.println("private_key_saved=false");
-  f.println("used_vn_bits=256");
-  f.println("surplus_vn_bits=" + String(vnBits > 256 ? vnBits - 256 : 0));
   f.flush();
   lastReportOK = !f.getWriteError();
   f.close();
@@ -380,12 +391,7 @@ void buildWallet() {
   entropyHex[64] = 0;
 
   // deterministic backup-quiz positions from the audit fingerprint
-  for (uint8_t k = 0; k < 4;) {
-    uint8_t p = hash[k * 5] % 24;
-    bool dup = false;
-    for (uint8_t j = 0; j < k; ++j) if (quizPos[j] == p) dup = true;
-    if (!dup) quizPos[k++] = p;
-  }
+  wc_quiz_positions(hash, quizPos);
 
   if (!wc_nfkd(passphrase, passphraseNfkd, sizeof(passphraseNfkd))) {
     statusLine = "passphrase not valid UTF-8";
@@ -400,6 +406,11 @@ void buildWallet() {
   wc_solana_address(seed, address);
   wipeBytes(seed, 64);
   wipeBytes(bytes, 32);
+  // passphrase material is no longer needed once the seed is derived:
+  // keep only the set/empty flag (passLen1) for display and audit
+  wipeChars(passphrase, sizeof(passphrase));
+  wipeChars(passphraseConfirm, sizeof(passphraseConfirm));
+  wipeChars(passphraseNfkd, sizeof(passphraseNfkd));
   wipeBytes(hash, 32);
 
   passInput = false;
@@ -419,6 +430,7 @@ void startPassphrase() {
   passLen = 0; passLen1 = 0;
   passConfirmPhase = false;
   edgeReset();
+  inputAwaitRelease = true;  // the Enter that opened this screen must be released first
   passInput = true; showingResult = false; hasHash = false; clearArmed = false;
   statusLine = "passphrase: Enter=confirm";
   drawPassInput();
@@ -472,7 +484,7 @@ void handlePassInput(const Keyboard_Class::KeysState& ks) {
     char* buf = passConfirmPhase ? passphraseConfirm : passphrase;
     if (passLen) { buf[--passLen] = 0; statusLine = "char erased"; drawPassInput(); return; }
     if (passConfirmPhase) { passConfirmPhase = false; passLen = passLen1; statusLine = "edit first entry"; drawPassInput(); return; }
-    passInput = false; statusLine = "passphrase cancelled"; drawMain(); return;
+    passInput = false; waitingRelease = true; statusLine = "passphrase cancelled"; drawMain(); return;
   }
   if (e.addedCount == 1) {
     char* buf = passConfirmPhase ? passphraseConfirm : passphrase;
@@ -497,7 +509,7 @@ void handleQuiz(const Keyboard_Class::KeysState& ks) {
     }
     quizStep++; quizLen = 0; memset(quizBuf, 0, sizeof(quizBuf));
     if (quizStep == 4) {
-      quizActive = false; backupVerified = true;
+      quizActive = false; backupVerified = true; waitingRelease = true;
       statusLine = "BACKUP VERIFIED";
       drawResult();
       String why; bool ok = assessmentOK(&why);
@@ -510,7 +522,7 @@ void handleQuiz(const Keyboard_Class::KeysState& ks) {
   }
   if (e.del) {
     if (quizLen) { quizBuf[--quizLen] = 0; statusLine = "char erased"; }
-    else { quizActive = false; statusLine = "backup check cancelled"; drawResult(); return; }
+    else { quizActive = false; waitingRelease = true; statusLine = "backup check cancelled"; drawResult(); return; }
     drawQuiz();
     return;
   }
@@ -536,6 +548,7 @@ void acceptRoll(char c) {
 
 void clearEverything() {
   wipeRolls();
+  wipeChars(tailBuf, sizeof(tailBuf));
   wipeChars(passphrase, sizeof(passphrase));
   wipeChars(passphraseConfirm, sizeof(passphraseConfirm));
   wipeChars(passphraseNfkd, sizeof(passphraseNfkd));
@@ -584,15 +597,19 @@ void loop() {
   M5Cardputer.update();
   bool pressed = M5Cardputer.Keyboard.isPressed();
   Keyboard_Class::KeysState ks = M5Cardputer.Keyboard.keysState();
-  if (!pressed) { waitingRelease = false; edgeReset(); return; }
+  if (!pressed) { waitingRelease = false; edgeReset(); inputAwaitRelease = false; return; }
   if (modeSelect) {
     if (waitingRelease) return;
     waitingRelease = true;
     handleModeSelect(ks);
     return;
   }
-  if (passInput) { handlePassInput(ks); return; }
-  if (quizActive) { handleQuiz(ks); return; }
+  if (passInput || quizActive) {
+    if (inputAwaitRelease) return;  // ignore the keypress that opened this mode
+    if (passInput) handlePassInput(ks);
+    else handleQuiz(ks);
+    return;
+  }
   if (waitingRelease) return;
   waitingRelease = true;
 
@@ -634,6 +651,7 @@ void loop() {
       quizActive = true; quizStep = 0; quizLen = 0;
       memset(quizBuf, 0, sizeof(quizBuf));
       edgeReset();
+      inputAwaitRelease = true;  // the Enter that opened the quiz must be released first
       statusLine = "type the word shown";
       drawQuiz();
     }
