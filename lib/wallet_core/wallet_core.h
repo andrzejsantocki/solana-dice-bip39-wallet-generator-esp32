@@ -19,6 +19,10 @@ void wc_secure_zero(void* p, size_t n);
 // Returns number of bits written (max 256).
 size_t wc_vn_extract(const char* rolls, size_t roll_count, uint8_t out[32]);
 
+// Raw dice extraction (bias NOT removed): 3 bits per roll (1..6 -> 0..5),
+// first 256 bits only. Requires ceil(256/3) = 86 valid rolls.
+size_t wc_raw_extract(const char* rolls, size_t roll_count, uint8_t out[32]);
+
 // BIP39: 256-bit entropy -> 24-word mnemonic in out (WC_MNEMONIC_MAX_LEN).
 void wc_mnemonic_from_entropy(const uint8_t ent[32], char* out);
 

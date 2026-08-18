@@ -133,6 +133,11 @@ def vn_extract(rolls: str, cap_bits: int = 256) -> bytes:
     assert len(bs) == cap_bits
     return int(bs, 2).to_bytes(cap_bits // 8, "big")
 
+def raw_extract(rolls: str, cap_bits: int = 256) -> bytes:
+    bits = "".join(f"{int(c) - 1:03b}" for c in rolls)
+    assert len(bits) >= cap_bits
+    return int(bits[:cap_bits], 2).to_bytes(cap_bits // 8, "big")
+
 import random
 rng = random.Random(42)
 transcript = "".join(rng.choice("123456") for _ in range(700))
@@ -143,6 +148,7 @@ sd = seed_from_mnemonic(mn, "")  # empty BIP39 passphrase
 kL_s = solana_keypair(sd)
 addr = base58(pub_pynacl(kL_s))
 results["vn"] = {"transcript": transcript, "entropy": ent.hex(),
+                 "raw_entropy": raw_extract(transcript).hex(),
                  "fingerprint": fp, "mnemonic": mn, "address": addr}
 print("VN OK:", len(transcript), "rolls ->", addr)
 

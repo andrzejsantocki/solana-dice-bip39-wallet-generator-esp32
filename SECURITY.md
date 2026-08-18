@@ -3,6 +3,7 @@
 ## Current scope
 
 - Cardputer ADV dice-entry firmware
+- entropy mode fork at boot: Von Neumann extraction (default, bias removed) or raw dice (3 bits/roll, bias kept)
 - Von Neumann extraction from physical d6 rolls
 - 256 accepted comparison bits
 - SHA-256 audit fingerprint display
@@ -33,6 +34,17 @@
 - ASCII-only (0x20–0x7E), accepted one key at a time via per-key edge detection; chorded/overlapping keys are rejected with a visible warning, never silently merged or dropped.
 - Non-empty passphrases are entered twice; entries are compared in full before any derivation runs. BIP39 has no passphrase checksum — double-entry is the only typo defense.
 - Empty passphrase (default) skips confirmation.
+
+## Entropy mode fork
+
+At boot the device offers two extraction modes:
+
+- Von Neumann (default): roll pairs with equal values are dropped, the rest
+  produce unbiased bits. Recommended. ~615 rolls typical for 256 bits.
+- Raw dice: each roll contributes 3 bits directly (1..6 → 0..5). 86 rolls
+  suffice, but any physical bias of the dice passes straight into the
+  entropy. The UI marks this "Not recommended" and the sanity page flags it.
+  The SD report records the chosen mode (`entropy_mode=`).
 
 ## Radio posture
 

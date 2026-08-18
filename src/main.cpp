@@ -60,6 +60,16 @@ int resultPage = 0;
 bool hasHash = false, showingResult = false, sdOK = false, clearArmed = false, lastReportOK = false, radiosOffOK = false;
 bool waitingRelease = false;
 
+// entropy mode fork (boot menu)
+enum EntMode { MODE_VN = 0, MODE_RAW = 1 };
+EntMode entropyMode = MODE_VN;
+bool modeSelect = true;
+int modeCursor = 0;
+
+bool entropyReady() {
+  return entropyMode == MODE_VN ? vnBits >= 256 : rollCount >= 86;
+}
+
 // per-key edge state for typed input (passphrase / quiz)
 uint32_t typeMask[3] = {0, 0, 0};
 bool prevEnterK = false, prevDelK = false;
@@ -142,12 +152,13 @@ void computeStats() {
 bool assessmentOK(String* why = nullptr) {
   computeStats();
   String w = "";
-  if (vnBits < 256) {
-    w = "BLOCK: VN bits <256.";
+  if (!entropyReady()) {
+    w = entropyMode == MODE_VN ? "BLOCK: VN bits <256." : "BLOCK: need 86 rolls.";
     if (why) *why = w;
     return false;
   }
-  if (rollCount < 520) w += "WARN low roll count. ";
+  if (entropyMode == MODE_RAW) w += "RAW MODE: dice bias kept. ";
+  if (rollCount < 520 && entropyMode == MODE_VN) w += "WARN low roll count. ";
   for (int i = 0; i < 6; ++i) if (faceCount[i] == 0) w += "WARN missing face " + String(i + 1) + ". ";
   if (maxStreak >= 8) w += "WARN long streak. ";
   float pairs = rollCount / 2.0f;
@@ -183,12 +194,32 @@ void drawBars() {
   }
 }
 
+void drawModeSelect() {
+  drawHeader();
+  fillRound(7, 29, 226, 66, 8, PANEL); M5Cardputer.Display.drawRoundRect(7, 29, 226, 66, 8, 0x3338);
+  textAt(15, 37, "SELECT ENTROPY MODE", GOLD, PANEL);
+  textAt(15, 51, modeCursor == 0 ? "> 1) Von Neumann" : "  1) Von Neumann", modeCursor == 0 ? CYAN : TEXT, PANEL);
+  textAt(15, 63, modeCursor == 1 ? "> 2) Raw dice" : "  2) Raw dice", modeCursor == 1 ? CYAN : TEXT, PANEL);
+  fillRound(7, 76, 226, 49, 6, PANEL2); M5Cardputer.Display.drawRoundRect(7, 76, 226, 49, 6, 0x3338);
+  if (modeCursor == 0) {
+    textAt(15, 81, "Rolls read in pairs; equal", TEXT, PANEL2);
+    textAt(15, 93, "pairs dropped. Removes dice", TEXT, PANEL2);
+    textAt(15, 105, "bias. ~615 rolls needed.", TEXT, PANEL2);
+  } else {
+    textAt(15, 81, "Every roll used directly.", ROSE, PANEL2);
+    textAt(15, 93, "Dice bias KEPT in entropy.", ROSE, PANEL2);
+    textAt(15, 105, "86 rolls. Not recommended.", ROSE, PANEL2);
+  }
+  textAt(15, 118, "Up/Down: choose  Enter: select", MUTED, BG);
+}
+
 void drawMain() {
   showingResult = false;
   drawHeader(); computeStats();
   fillRound(7, 29, 118, 66, 8, PANEL); M5Cardputer.Display.drawRoundRect(7, 29, 118, 66, 8, 0x3338);
-  textAt(15, 37, "rolls", MUTED, PANEL); textAt(15, 50, String(rollCount), vnBits >= 256 ? GREEN : GOLD, PANEL, 2);
-  textAt(68, 50, "VN " + String(vnBits) + "/256", vnBits >= 256 ? GREEN : GOLD, PANEL);
+  textAt(15, 37, "rolls", MUTED, PANEL); textAt(15, 50, String(rollCount), entropyReady() ? GREEN : GOLD, PANEL, 2);
+  textAt(68, 50, entropyMode == MODE_VN ? "VN " + String(vnBits) + "/256" : "RAW " + String(rollCount) + "/86",
+         entropyReady() ? GREEN : GOLD, PANEL);
   textAt(15, 75, "ties " + String(ties) + "  streak " + String(maxStreak), MUTED, PANEL);
   textAt(15, 86, sdOK ? "SD report enabled" : "SD not mounted", sdOK ? MINT : ROSE, PANEL);
   drawBars();
@@ -300,6 +331,7 @@ void writeReport(bool ok, const String& why) {
   f.println("max_streak=" + String(maxStreak));
   f.println("faces=" + String(faceCount[0]) + "," + String(faceCount[1]) + "," + String(faceCount[2]) + "," + String(faceCount[3]) + "," + String(faceCount[4]) + "," + String(faceCount[5]));
   f.println("audit_fingerprint_sha256=" + String(entropyHex));
+  f.println(entropyMode == MODE_VN ? "entropy_mode=von_neumann" : "entropy_mode=raw_dice");
   f.println("address=" + String(address[0] ? address : "n/a"));
   f.println(passLen1 > 0 ? "passphrase_set=yes" : "passphrase_set=no");
   f.println("passphrase_ascii_only=yes");
@@ -335,11 +367,25 @@ void buildWallet() {
     return;
   }
   String why; bool ok = assessmentOK(&why);
-  if (!ok) { hasHash = false; statusLine = "need 256 VN bits"; entropyHex[0] = 0; resultPage = PAGE_SANITY; lastAssessment = why; writeReport(false, why); drawResult(); return; }
+  if (!ok) {
+    hasHash = false;
+    statusLine = entropyMode == MODE_VN ? "need 256 VN bits" : "need 86 rolls";
+    entropyHex[0] = 0; resultPage = PAGE_SANITY; lastAssessment = why;
+    writeReport(false, why);
+    drawResult();
+    return;
+  }
 
   uint8_t bytes[32];
-  size_t bits = wc_vn_extract(rolls, rollCount, bytes);
-  if (bits < 256) { statusLine = "need 256 VN bits"; hasHash = false; drawMain(); return; }
+  size_t bits = (entropyMode == MODE_VN)
+                    ? wc_vn_extract(rolls, rollCount, bytes)
+                    : wc_raw_extract(rolls, rollCount, bytes);
+  if (bits < 256) {
+    statusLine = entropyMode == MODE_VN ? "need 256 VN bits" : "need 86 rolls";
+    hasHash = false;
+    drawMain();
+    return;
+  }
   uint8_t hash[32];
   const char domain[] = "DiceWallet audit v1";
   mbedtls_sha256_context ctx;
@@ -396,6 +442,26 @@ void startPassphrase() {
   passInput = true; showingResult = false; hasHash = false; clearArmed = false;
   statusLine = "passphrase: Enter=confirm";
   drawPassInput();
+}
+
+void handleModeSelect(const Keyboard_Class::KeysState& ks) {
+  bool prev = false, next = false;
+  for (auto h : ks.hid_keys) {
+    if (h == HID_UP || h == HID_LEFT) prev = true;
+    if (h == HID_DOWN || h == HID_RIGHT) next = true;
+  }
+  for (auto c : ks.word) {
+    if (c == 'w' || c == 'a' || c == 'W' || c == 'A') prev = true;
+    if (c == 's' || c == 'd' || c == 'S' || c == 'D') next = true;
+  }
+  if (prev || next) { modeCursor = 1 - modeCursor; drawModeSelect(); return; }
+  if (ks.enter) {
+    entropyMode = (modeCursor == 0) ? MODE_VN : MODE_RAW;
+    modeSelect = false;
+    statusLine = (entropyMode == MODE_VN) ? "mode: Von Neumann" : "mode: RAW dice - bias kept";
+    drawMain();
+    return;
+  }
 }
 
 void handlePassInput(const Keyboard_Class::KeysState& ks) {
@@ -529,7 +595,9 @@ void setup() {
   disableRadios();
   radiosOffOK = verifyRadios();
   wipeRolls();
-  initSD(); drawMain();
+  initSD();
+  statusLine = "select entropy mode";
+  drawModeSelect();
 }
 
 void loop() {
@@ -537,6 +605,12 @@ void loop() {
   bool pressed = M5Cardputer.Keyboard.isPressed();
   Keyboard_Class::KeysState ks = M5Cardputer.Keyboard.keysState();
   if (!pressed) { waitingRelease = false; edgeReset(); return; }
+  if (modeSelect) {
+    if (waitingRelease) return;
+    waitingRelease = true;
+    handleModeSelect(ks);
+    return;
+  }
   if (passInput) { handlePassInput(ks); return; }
   if (quizActive) { handleQuiz(ks); return; }
   if (waitingRelease) return;
@@ -595,7 +669,7 @@ void loop() {
 
   if (ks.enter && now - lastEnterMs > 500) {
     lastEnterMs = now;
-    if (vnBits >= 256) {
+    if (entropyReady()) {
       if (!verifyRadios()) {
         radiosOffOK = false;
         statusLine = "RADIO STATE ERROR - blocked";

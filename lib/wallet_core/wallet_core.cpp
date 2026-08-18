@@ -60,6 +60,22 @@ size_t wc_vn_extract(const char* rolls, size_t roll_count, uint8_t out[32]) {
   return bit;
 }
 
+// ---------------- Raw dice extraction (bias kept) ----------------
+size_t wc_raw_extract(const char* rolls, size_t roll_count, uint8_t out[32]) {
+  memset(out, 0, 32);
+  size_t bit = 0;
+  for (size_t i = 0; i < roll_count && bit < 256; ++i) {
+    char c = rolls[i];
+    if (c < '1' || c > '6') continue;
+    uint8_t v = (uint8_t)(c - '1');  // 0..5, injective: raw bias passes through unchanged
+    for (int b = 2; b >= 0 && bit < 256; --b) {
+      if ((v >> b) & 1) out[bit / 8] |= (uint8_t)(1 << (7 - (bit % 8)));
+      bit++;
+    }
+  }
+  return bit;
+}
+
 // ---------------- BIP39 ----------------
 void wc_mnemonic_from_entropy(const uint8_t ent[32], char* out) {
   uint8_t cs[32];

@@ -137,6 +137,11 @@ int main() {
     char got[129];
     for (int j = 0; j < 32; ++j) sprintf(got + j * 2, "%02x", ent[j]);
     CHECK(strcmp(got, v->entropy) == 0, "vn entropy");
+    uint8_t raw[32];
+    size_t rawbits = wc_raw_extract(v->transcript, strlen(v->transcript), raw);
+    CHECK(rawbits == 256, "raw bits == 256");
+    for (int j = 0; j < 32; ++j) sprintf(got + j * 2, "%02x", raw[j]);
+    CHECK(strcmp(got, v->raw_entropy) == 0, "raw entropy");
     const char* dom = "DiceWallet audit v1";
     uint8_t dombuf[64];
     memcpy(dombuf, dom, strlen(dom));

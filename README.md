@@ -9,13 +9,15 @@ Dice-entropy BIP39 wallet generator: physical d6 rolls → Von Neumann extractio
 ## Current scope
 
 - colorful 240x135 Cardputer ADV UI
+- boot fork: select entropy mode with arrows — Von Neumann (unbiased, ~615 rolls) or raw dice (fast, 86 rolls, bias kept)
 - physical d6 input uses a strict press-release FSM: one complete keypress = one roll; dice-key chords are ignored
 - typed input (passphrase, backup check) uses per-key edge detection: overlapping/chorded keys are rejected with an explicit warning, never silently merged or dropped
 - Von Neumann extraction from roll pairs:
   - equal pair: discarded
   - first < second: bit 0
   - first > second: bit 1
-- hard gate: at least 256 accepted VN bits
+- raw dice mode: each roll contributes 3 bits directly (1..6 → 0..5); physical dice bias is NOT removed — the UI warns before selection
+- hard gate: at least 256 accepted VN bits (Von Neumann mode) or 86 rolls (raw mode)
 - no fixed roll-count gate; fair d6 usually needs about 615 rolls, but actual VN bit count wins
 - SHA-256 audit fingerprint display, split into large readable numbered lines
 - BIP39 mnemonic generation (24 words, English wordlist, 256-bit ENT)
@@ -38,13 +40,18 @@ The firmware never exports or displays the raw private key or seed. The mnemonic
 
 ```text
 physical d6 rolls
-→ Von Neumann extraction
+→ Von Neumann extraction (default) OR raw dice extraction (3 bits/roll, bias kept)
 → rawEntropy[32]
 → BIP39 ENT (24 words + 8-bit checksum)
 → PBKDF2-HMAC-SHA512("mnemonic" || NFKD(passphrase), 2048 rounds) = seed[64]
 → SLIP-0010 Ed25519 m/44'/501'/0'/0'
 → ed25519 pubkey → base58 = Solana address
 ```
+
+At boot the device asks which extraction to use, with a short explanation of each.
+Von Neumann removes physical dice bias (equal pairs are dropped, ~615 rolls
+typical). Raw mode feeds dice values straight into entropy (86 rolls) and keeps
+any bias of the physical dice — the UI marks it "Not recommended".
 
 The displayed SHA-256 value is an audit fingerprint only:
 

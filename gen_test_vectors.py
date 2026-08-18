@@ -41,8 +41,8 @@ out.append("")
 
 vn = v["vn"]
 out.append("typedef struct { const char* transcript; const char* entropy; "
-           "const char* fingerprint; const char* mnemonic; const char* address; } VnVector;")
-out.append(f'static const VnVector VN_VECTOR = {{"{vn["transcript"]}", "{vn["entropy"]}", "{vn["fingerprint"]}", "{vn["mnemonic"]}", "{vn["address"]}"}};')
+           "const char* raw_entropy; const char* fingerprint; const char* mnemonic; const char* address; } VnVector;")
+out.append(f'static const VnVector VN_VECTOR = {{"{vn["transcript"]}", "{vn["entropy"]}", "{vn["raw_entropy"]}", "{vn["fingerprint"]}", "{vn["mnemonic"]}", "{vn["address"]}"}};')
 out.append("")
 out.append("#define BIP39_VECTOR_COUNT %d" % len(v["bip39"]))
 out.append("#define SLIP10_VECTOR_COUNT %d" % len(v["slip10"]))
