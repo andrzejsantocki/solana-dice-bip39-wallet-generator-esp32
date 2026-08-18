@@ -23,6 +23,24 @@ size_t wc_vn_extract(const char* rolls, size_t roll_count, uint8_t out[32]);
 // first 256 bits only. Requires ceil(256/3) = 86 valid rolls.
 size_t wc_raw_extract(const char* rolls, size_t roll_count, uint8_t out[32]);
 
+// ---- keyboard edge parsing (shared with firmware UI, host-tested) ----
+// Printable ASCII 0x20..0x7E needs 4x32-bit buckets (0x7E >> 5 == 3).
+#define WC_ASCII_BUCKETS 4
+struct WcKeyEdges {
+  char added[8];
+  uint8_t addedCount;
+  bool chord, enter, del;
+};
+// Per-update edge detection: chars newly present vs the persistent mask are
+// "added"; >1 new char = chord. enter/del are edge-triggered. Callers reset
+// mask/prev flags on full release.
+void wc_key_edges(const uint8_t* word, size_t word_len, bool enter, bool del,
+                  uint32_t mask[WC_ASCII_BUCKETS], bool* prevEnter,
+                  bool* prevDel, WcKeyEdges* out);
+
+// Constant-time equality (volatile reads, no early exit).
+bool wc_ct_equal(const void* a, const void* b, size_t n);
+
 // BIP39: 256-bit entropy -> 24-word mnemonic in out (WC_MNEMONIC_MAX_LEN).
 void wc_mnemonic_from_entropy(const uint8_t ent[32], char* out);
 

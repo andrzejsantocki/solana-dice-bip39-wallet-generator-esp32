@@ -76,6 +76,46 @@ size_t wc_raw_extract(const char* rolls, size_t roll_count, uint8_t out[32]) {
   return bit;
 }
 
+// ---------------- keyboard edge parsing ----------------
+void wc_key_edges(const uint8_t* word, size_t word_len, bool enter, bool del,
+                  uint32_t mask[WC_ASCII_BUCKETS], bool* prevEnter,
+                  bool* prevDel, WcKeyEdges* out) {
+  out->addedCount = 0;
+  out->chord = false;
+  out->enter = false;
+  out->del = false;
+  uint32_t cur[WC_ASCII_BUCKETS] = {0, 0, 0, 0};
+  char chars[8];
+  uint8_t n = 0;
+  for (size_t i = 0; i < word_len && n < 8; ++i) {
+    uint8_t c = word[i];
+    if (c >= 0x20 && c <= 0x7E) {
+      chars[n++] = (char)c;
+      cur[c >> 5] |= 1u << (c & 31);
+    }
+  }
+  for (uint8_t i = 0; i < n; ++i) {
+    uint8_t c = (uint8_t)chars[i];
+    uint32_t bit = 1u << (c & 31);
+    if (!(mask[c >> 5] & bit)) out->added[out->addedCount++] = chars[i];
+  }
+  out->chord = out->addedCount > 1;
+  memcpy(mask, cur, sizeof(cur));
+  out->enter = enter && !*prevEnter;
+  *prevEnter = enter;
+  out->del = del && !*prevDel;
+  *prevDel = del;
+}
+
+// ---------------- constant-time equality ----------------
+bool wc_ct_equal(const void* a, const void* b, size_t n) {
+  const volatile uint8_t* pa = (const volatile uint8_t*)a;
+  const volatile uint8_t* pb = (const volatile uint8_t*)b;
+  uint8_t diff = 0;
+  for (size_t i = 0; i < n; ++i) diff |= (uint8_t)(pa[i] ^ pb[i]);
+  return diff == 0;
+}
+
 // ---------------- BIP39 ----------------
 void wc_mnemonic_from_entropy(const uint8_t ent[32], char* out) {
   uint8_t cs[32];

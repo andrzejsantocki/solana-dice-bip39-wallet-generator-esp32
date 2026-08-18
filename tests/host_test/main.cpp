@@ -179,6 +179,64 @@ int main() {
   }
   printf("base58 bounds: rejection checked\n");
 
+  // 8) wc_key_edges boundaries: ' ', '_', '`', 'a', 'z', '~', chords, enter/del
+  {
+    WcKeyEdges e;
+    uint32_t mask[WC_ASCII_BUCKETS] = {0, 0, 0, 0};
+    bool pe = false, pd = false;
+    const uint8_t key_a[] = {'a'};
+    wc_key_edges(key_a, 1, false, false, mask, &pe, &pd, &e);
+    CHECK(e.addedCount == 1 && e.added[0] == 'a' && !e.chord, "key 'a' added");
+    wc_key_edges(key_a, 1, false, false, mask, &pe, &pd, &e);
+    CHECK(e.addedCount == 0, "held 'a': no repeat edge");
+    const uint8_t key_z[] = {'z'};
+    memset(mask, 0, sizeof(mask));
+    wc_key_edges(key_z, 1, false, false, mask, &pe, &pd, &e);
+    CHECK(e.addedCount == 1 && e.added[0] == 'z', "key 'z' added");
+    const uint8_t key_tilde[] = {'~'};  // 0x7E: top printable bucket boundary
+    memset(mask, 0, sizeof(mask));
+    wc_key_edges(key_tilde, 1, false, false, mask, &pe, &pd, &e);
+    CHECK(e.addedCount == 1 && e.added[0] == '~', "key '~' added");
+    const uint8_t key_sp[] = {' '};  // 0x20: bottom printable
+    memset(mask, 0, sizeof(mask));
+    wc_key_edges(key_sp, 1, false, false, mask, &pe, &pd, &e);
+    CHECK(e.addedCount == 1 && e.added[0] == ' ', "key ' ' added");
+    const uint8_t key_us[] = {'_'};  // 0x5F: bucket 2 boundary
+    memset(mask, 0, sizeof(mask));
+    wc_key_edges(key_us, 1, false, false, mask, &pe, &pd, &e);
+    CHECK(e.addedCount == 1 && e.added[0] == '_', "key '_' added");
+    const uint8_t key_bt[] = {'`'};  // 0x60: bucket 3 start
+    memset(mask, 0, sizeof(mask));
+    wc_key_edges(key_bt, 1, false, false, mask, &pe, &pd, &e);
+    CHECK(e.addedCount == 1 && e.added[0] == '`', "key '`' added");
+    const uint8_t key_chord[] = {'a', 'b'};
+    memset(mask, 0, sizeof(mask));
+    wc_key_edges(key_chord, 2, false, false, mask, &pe, &pd, &e);
+    CHECK(e.chord && e.addedCount == 2, "chord detected");
+    memset(mask, 0, sizeof(mask));
+    wc_key_edges(NULL, 0, true, true, mask, &pe, &pd, &e);
+    CHECK(e.enter && e.del, "enter/del first press");
+    wc_key_edges(NULL, 0, true, true, mask, &pe, &pd, &e);
+    CHECK(!e.enter && !e.del, "enter/del held: no repeat");
+    const uint8_t key_np[] = {0x01, 0x7F, 'a'};
+    memset(mask, 0, sizeof(mask));
+    wc_key_edges(key_np, 3, false, false, mask, &pe, &pd, &e);
+    CHECK(e.addedCount == 1 && e.added[0] == 'a', "non-printable skipped");
+  }
+  printf("wc_key_edges: boundary tests checked\n");
+
+  // 9) wc_ct_equal
+  {
+    const char a1[] = "passphrase-one", a2[] = "passphrase-one";
+    const char b1[] = "passphrase-two";
+    CHECK(wc_ct_equal(a1, a2, sizeof(a1)), "ct_equal: equal");
+    CHECK(!wc_ct_equal(a1, b1, sizeof(a1)), "ct_equal: differs");
+    uint8_t x[64] = {0}, y[64] = {0};
+    y[63] = 1;
+    CHECK(!wc_ct_equal(x, y, 64), "ct_equal: last-byte differs");
+  }
+  printf("wc_ct_equal: checked\n");
+
   if (failures) {
     printf("\n%d FAILURES\n", failures);
     return 1;

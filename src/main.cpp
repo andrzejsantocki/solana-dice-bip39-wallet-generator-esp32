@@ -71,38 +71,17 @@ bool entropyReady() {
 }
 
 // per-key edge state for typed input (passphrase / quiz)
-uint32_t typeMask[3] = {0, 0, 0};
+uint32_t typeMask[WC_ASCII_BUCKETS] = {0, 0, 0, 0};
 bool prevEnterK = false, prevDelK = false;
-
-struct KeyEdges {
-  char added[8];
-  uint8_t addedCount = 0;
-  bool chord = false, enter = false, del = false;
-};
 
 void wipeChars(volatile char* p, size_t n) { for (size_t i = 0; i < n; ++i) p[i] = 0; }
 void wipeBytes(volatile uint8_t* p, size_t n) { for (size_t i = 0; i < n; ++i) p[i] = 0; }
 
 void edgeReset() { memset(typeMask, 0, sizeof(typeMask)); prevEnterK = prevDelK = false; }
 
-void keyEdges(const Keyboard_Class::KeysState& ks, KeyEdges& out) {
-  out = KeyEdges();
-  uint32_t cur[3] = {0, 0, 0};
-  char chars[8]; uint8_t n = 0;
-  for (auto c : ks.word) {
-    if (c >= 0x20 && c <= 0x7E && n < 8) {
-      chars[n++] = c;
-      cur[(uint8_t)c >> 5] |= 1u << ((uint8_t)c & 31);
-    }
-  }
-  for (uint8_t i = 0; i < n; ++i) {
-    uint32_t bit = 1u << ((uint8_t)chars[i] & 31);
-    if (!(typeMask[(uint8_t)chars[i] >> 5] & bit)) out.added[out.addedCount++] = chars[i];
-  }
-  out.chord = out.addedCount > 1;
-  memcpy(typeMask, cur, sizeof(cur));
-  out.enter = ks.enter && !prevEnterK; prevEnterK = ks.enter;
-  out.del = ks.del && !prevDelK; prevDelK = ks.del;
+void keyEdges(const Keyboard_Class::KeysState& ks, WcKeyEdges& out) {
+  wc_key_edges(reinterpret_cast<const uint8_t*>(ks.word.data()), ks.word.size(),
+               ks.enter, ks.del, typeMask, &prevEnterK, &prevDelK, &out);
 }
 
 void fillRound(int x, int y, int w, int h, int r, uint16_t color) { M5Cardputer.Display.fillRoundRect(x, y, w, h, r, color); }
@@ -332,7 +311,8 @@ void writeReport(bool ok, const String& why) {
   f.println("faces=" + String(faceCount[0]) + "," + String(faceCount[1]) + "," + String(faceCount[2]) + "," + String(faceCount[3]) + "," + String(faceCount[4]) + "," + String(faceCount[5]));
   f.println("audit_fingerprint_sha256=" + String(entropyHex));
   f.println(entropyMode == MODE_VN ? "entropy_mode=von_neumann" : "entropy_mode=raw_dice");
-  f.println("address=" + String(address[0] ? address : "n/a"));
+  // address is gated on backup verification: never written to SD before the quiz passes
+  f.println(backupVerified ? ("address=" + String(address[0] ? address : "n/a")) : "address=n/a (backup not verified)");
   f.println(passLen1 > 0 ? "passphrase_set=yes" : "passphrase_set=no");
   f.println("passphrase_ascii_only=yes");
   f.println(backupVerified ? "backup_verified=yes" : "backup_verified=no");
@@ -465,10 +445,10 @@ void handleModeSelect(const Keyboard_Class::KeysState& ks) {
 }
 
 void handlePassInput(const Keyboard_Class::KeysState& ks) {
-  KeyEdges e; keyEdges(ks, e);
+  WcKeyEdges e; keyEdges(ks, e);
   if (e.enter) {
     if (passConfirmPhase) {
-      if (memcmp(passphrase, passphraseConfirm, WC_PASSPHRASE_MAX_LEN) == 0) {
+      if (wc_ct_equal(passphrase, passphraseConfirm, WC_PASSPHRASE_MAX_LEN)) {
         passLen = passLen1;
         passInput = false;
         buildWallet();
@@ -505,7 +485,7 @@ void handlePassInput(const Keyboard_Class::KeysState& ks) {
 }
 
 void handleQuiz(const Keyboard_Class::KeysState& ks) {
-  KeyEdges e; keyEdges(ks, e);
+  WcKeyEdges e; keyEdges(ks, e);
   if (e.enter) {
     uint8_t pos = quizPos[quizStep];
     bool match = quizLen == wordLen[pos] && memcmp(quizBuf, mnemonic + wordOff[pos], wordLen[pos]) == 0;

@@ -18,7 +18,7 @@ Dice-entropy BIP39 wallet generator: physical d6 rolls → Von Neumann extractio
   - first > second: bit 1
 - raw dice mode: each roll contributes 3 bits directly (1..6 → 0..5); physical dice bias is NOT removed — the UI warns before selection
 - hard gate: at least 256 accepted VN bits (Von Neumann mode) or 86 rolls (raw mode)
-- no fixed roll-count gate; fair d6 usually needs about 615 rolls, but actual VN bit count wins
+- no minimum fixed roll-count gate; the session buffer caps at 1024 rolls (fair dice never get near it; heavily biased dice in VN mode may hit it — clear and re-roll if so)
 - SHA-256 audit fingerprint display, split into large readable numbered lines
 - BIP39 mnemonic generation (24 words, English wordlist, 256-bit ENT)
 - BIP39 passphrase, entered twice with constant-time comparison (empty passphrase = default), ASCII-only input (0x20–0x7E), NFKD-normalized
@@ -89,7 +89,9 @@ Host-side verification (`tests/`) compiles the exact on-device `lib/wallet_core`
 - SLIP-0010: official ed25519 spec vectors (3×)
 - Solana: m/44'/501'/0'/0' addresses cross-checked between PyNaCl and cryptography (8×)
 - NFKD: NFD vs NFC passphrase forms produce identical seeds
-- Von Neumann pipeline: fixed 700-roll transcript → entropy → fingerprint → mnemonic → seed → address, end-to-end
+- Von Neumann pipeline: fixed 700-roll transcript → entropy → fingerprint → mnemonic → seed → address, end-to-end (VN and raw paths)
+- keyboard edge parsing (passphrase/quiz input): boundary chars `' '`, `'_'`, '`', `'a'`, `'z'`, `'~'`, chord rejection, enter/del edge triggering, held-key suppression
+- wc_ct_equal constant-time comparison
 - contracts: wc_nfkd never truncates (overflow → false), base58 bounds rejection
 
 ```bash
@@ -99,7 +101,7 @@ bash tests/build_host_test.sh       # portable: w64devkit (Windows) or system gc
 ./tests/host_test/host_test         # .exe suffix on Windows
 ```
 
-CI runs the host tests on every push/PR and publishes tag releases only after both host tests and the firmware build pass.
+CI runs the host tests on every push/PR — with AddressSanitizer + UndefinedBehaviorSanitizer enabled — and publishes tag releases only after both host tests and the firmware build pass.
 
 Hardware-in-the-loop (scripted ~615-roll replay, fingerprint reproducibility) has not been performed — no device available.
 
