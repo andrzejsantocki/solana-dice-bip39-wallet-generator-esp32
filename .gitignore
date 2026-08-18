@@ -9,3 +9,4 @@ src/.hermes-tmp*/
 *.elf
 *.map
 *.log
+tests/host_test/host_test.exe
