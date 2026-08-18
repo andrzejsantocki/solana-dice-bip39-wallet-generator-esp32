@@ -5,6 +5,7 @@
 #include <WiFi.h>
 #include <esp_bt.h>
 #include <esp_wifi.h>
+#include "wallet_core.h"
 
 #define SD_SPI_SCK_PIN 40
 #define SD_SPI_MISO_PIN 39
@@ -14,6 +15,15 @@
 #define HID_DOWN 0x51
 #define HID_RIGHT 0x4F
 #define HID_LEFT 0x50
+
+#define PAGE_FINGERPRINT 0
+#define PAGE_MNEMONIC_FIRST 1
+#define PAGE_MNEMONIC_COUNT 8
+#define PAGE_PASSPHRASE 9
+#define PAGE_ADDRESS 10
+#define PAGE_SANITY 11
+#define PAGE_SD 12
+#define PAGE_COUNT 13
 
 namespace {
 constexpr uint16_t BG = 0x08AC, PANEL = 0x118F, PANEL2 = 0x19F3;
@@ -26,12 +36,23 @@ size_t rollCount = 0;
 String entropyHex;
 String statusLine = "READY: press one d6 key";
 String lastAssessment = "";
+char passphrase[WC_PASSPHRASE_MAX_LEN] = {0};
+char passphraseNfkd[WC_PASSPHRASE_MAX_LEN] = {0};
+char mnemonic[WC_MNEMONIC_MAX_LEN] = {0};
+char address[WC_ADDRESS_MAX_LEN] = {0};
+uint16_t wordOff[24] = {0};
+uint8_t wordLen[24] = {0};
+size_t passLen = 0;
+bool passInput = false;
 uint16_t faceCount[6] = {0};
 uint16_t vnBits = 0, ties = 0, maxStreak = 0;
 uint32_t lastNavMs = 0, lastEnterMs = 0;
 int resultPage = 0;
 bool hasHash = false, showingResult = false, sdOK = false, clearArmed = false, lastReportOK = false, radiosOffOK = false;
 bool waitingRelease = false;
+
+void wipeChars(volatile char* p, size_t n) { for (size_t i = 0; i < n; ++i) p[i] = 0; }
+void wipeBytes(volatile uint8_t* p, size_t n) { for (size_t i = 0; i < n; ++i) p[i] = 0; }
 
 void fillRound(int x, int y, int w, int h, int r, uint16_t color) { M5Cardputer.Display.fillRoundRect(x, y, w, h, r, color); }
 void textAt(int x, int y, const String& s, uint16_t fg = TEXT, uint16_t bg = BG, float size = 1) {
@@ -123,37 +144,57 @@ void drawMain() {
   textAt(15, 121, statusLine, hasHash ? GREEN : MUTED, PANEL2);
 }
 
+void drawPassInput() {
+  drawHeader();
+  fillRound(7, 29, 226, 66, 8, PANEL); M5Cardputer.Display.drawRoundRect(7, 29, 226, 66, 8, 0x3338);
+  textAt(15, 37, "BIP39 PASSPHRASE", GOLD, PANEL);
+  textAt(15, 51, "Empty = default.", TEXT, PANEL);
+  textAt(15, 63, "NFKD normalized.", MUTED, PANEL);
+  textAt(15, 77, "Changes every address.", TEXT, PANEL);
+  String mask = "";
+  for (size_t i = 0; i < passLen; ++i) mask += '*';
+  textAt(15, 90, mask.length() ? mask : "<empty>", CYAN, BG);
+  fillRound(7, 103, 226, 27, 7, PANEL2); M5Cardputer.Display.drawRoundRect(7, 103, 226, 27, 7, 0x3338);
+  textAt(15, 110, "len " + String(passLen) + "/" + String(WC_PASSPHRASE_MAX_LEN - 1), MUTED, PANEL2);
+  textAt(15, 121, "Enter=confirm  Del=" + String(passLen ? "backspace" : "cancel"), TEXT, PANEL2);
+}
+
 void drawResult() {
   showingResult = true;
   drawHeader(); computeStats(); String why; bool ok = assessmentOK(&why);
   fillRound(8, 28, 224, 98, 10, PANEL); M5Cardputer.Display.drawRoundRect(8, 28, 224, 98, 10, ok ? GREEN : RED);
-  textAt(18, 36, "page " + String(resultPage + 1) + "/6  arrows up/down", MUTED, PANEL);
-  if (resultPage == 0) {
+  textAt(18, 36, "page " + String(resultPage + 1) + "/" + String(PAGE_COUNT) + "  arrows up/down", MUTED, PANEL);
+  if (resultPage == PAGE_FINGERPRINT) {
     textAt(18, 48, "1) SHA256 FINGERPRINT", GREEN, PANEL);
     M5Cardputer.Display.setTextSize(2); M5Cardputer.Display.setTextColor(CYAN, PANEL);
     M5Cardputer.Display.drawString("1|" + entropyHex.substring(0, 16), 12, 61);
     M5Cardputer.Display.drawString("2|" + entropyHex.substring(16, 32), 12, 77);
     M5Cardputer.Display.drawString("3|" + entropyHex.substring(32, 48), 12, 93);
     M5Cardputer.Display.drawString("4|" + entropyHex.substring(48, 64), 12, 109);
-  } else if (resultPage == 1) {
-    textAt(18, 50, "2) PASSPHRASE", GOLD, PANEL);
-    textAt(18, 64, "Optional BIP39 passphrase.", TEXT, PANEL);
+  } else if (resultPage >= PAGE_MNEMONIC_FIRST && resultPage < PAGE_MNEMONIC_FIRST + PAGE_MNEMONIC_COUNT) {
+    uint8_t base = (resultPage - PAGE_MNEMONIC_FIRST) * 3;
+    textAt(18, 46, "MNEMONIC " + String(base + 1) + "-" + String(base + 3) + " / 24", GREEN, PANEL);
+    for (int k = 0; k < 3; ++k) {
+      uint16_t i = base + k;
+      if (i >= 24) break;
+      String w = String(i + 1) + ". " + String(mnemonic + wordOff[i]).substring(0, wordLen[i]);
+      textAt(18, 60 + k * 14, w, TEXT, PANEL);
+    }
+    textAt(18, 108, "Write these words down.", ROSE, PANEL);
+  } else if (resultPage == PAGE_PASSPHRASE) {
+    textAt(18, 50, "3) PASSPHRASE", GOLD, PANEL);
+    textAt(18, 64, passLen ? "set (never shown)" : "empty (default)", TEXT, PANEL);
     textAt(18, 78, "Changes every address.", TEXT, PANEL);
     textAt(18, 96, "Lose it => funds lost.", ROSE, PANEL);
     textAt(18, 108, "Default empty for restore.", MUTED, PANEL);
-  } else if (resultPage == 2) {
-    textAt(18, 50, "3) SOLFLARE / PHANTOM", CYAN, PANEL);
-    textAt(18, 64, "Path m/44'/501'/0'/0'", TEXT, PANEL);
-    textAt(18, 78, "Restore: words + passphrase.", TEXT, PANEL);
-    textAt(18, 96, "Empty passphrase common.", MUTED, PANEL);
-    textAt(18, 108, "Address derivation next.", MUTED, PANEL);
-  } else if (resultPage == 3) {
-    textAt(18, 50, "4) MNEMONIC / SEED", GREEN, PANEL);
-    textAt(18, 64, "Main human backup.", TEXT, PANEL);
-    textAt(18, 78, "24 words restore wallet.", TEXT, PANEL);
-    textAt(18, 96, "Not implemented yet here.", ROSE, PANEL);
-    textAt(18, 108, "Next build adds BIP39.", MUTED, PANEL);
-  } else if (resultPage == 4) {
+  } else if (resultPage == PAGE_ADDRESS) {
+    textAt(18, 46, "4) SOLANA ADDRESS", CYAN, PANEL);
+    textAt(18, 60, String(address).substring(0, 16), TEXT, PANEL);
+    textAt(18, 72, String(address).substring(16, 32), TEXT, PANEL);
+    textAt(18, 84, String(address).substring(32), TEXT, PANEL);
+    textAt(18, 102, "Path m/44'/501'/0'/0'", MUTED, PANEL);
+    textAt(18, 112, "Solflare / Phantom compatible", MUTED, PANEL);
+  } else if (resultPage == PAGE_SANITY) {
     textAt(18, 50, ok ? "5) SANITY: OK" : "5) SANITY: BLOCK", ok ? GREEN : RED, PANEL);
     textAt(18, 64, why.substring(0, 34), ok ? GREEN : ROSE, PANEL);
     textAt(18, 76, why.substring(34, 68), ok ? GREEN : ROSE, PANEL);
@@ -182,8 +223,12 @@ void writeReport(bool ok, const String& why) {
   f.println("max_streak=" + String(maxStreak));
   f.println("faces=" + String(faceCount[0]) + "," + String(faceCount[1]) + "," + String(faceCount[2]) + "," + String(faceCount[3]) + "," + String(faceCount[4]) + "," + String(faceCount[5]));
   f.println("audit_fingerprint_sha256=" + entropyHex);
+  f.println("address=" + String(address[0] ? address : "n/a"));
+  f.println("passphrase_set=" + String(passLen > 0 ? "yes" : "no"));
   f.println("roll_transcript_saved=false");
   f.println("raw_vn_entropy_saved=false");
+  f.println("mnemonic_saved=false");
+  f.println("private_key_saved=false");
   f.println("used_vn_bits=256");
   f.println("surplus_vn_bits=" + String(vnBits > 256 ? vnBits - 256 : 0));
   f.flush();
@@ -191,9 +236,21 @@ void writeReport(bool ok, const String& why) {
   f.close();
 }
 
-void makeEntropy() {
+void parseMnemonicWords() {
+  uint16_t w = 0; wordOff[0] = 0;
+  for (size_t i = 0; mnemonic[i]; ++i) {
+    if (mnemonic[i] == ' ') {
+      wordLen[w] = (uint8_t)(i - wordOff[w]);
+      w++;
+      if (w < 24) wordOff[w] = (uint16_t)(i + 1);
+    }
+  }
+  if (w < 24) wordLen[w] = (uint8_t)(strlen(mnemonic) - wordOff[w]);
+}
+
+void buildWallet() {
   String why; bool ok = assessmentOK(&why);
-  if (!ok) { hasHash = false; statusLine = "need 256 VN bits"; entropyHex = ""; resultPage = 4; lastAssessment = why; writeReport(false, why); drawResult(); return; }
+  if (!ok) { hasHash = false; statusLine = "need 256 VN bits"; entropyHex = ""; resultPage = PAGE_SANITY; lastAssessment = why; writeReport(false, why); drawResult(); return; }
 
   uint8_t bytes[32] = {0}; uint16_t bit = 0;
   for (size_t i = 1; i < rollCount && bit < 256; i += 2) {
@@ -212,11 +269,25 @@ void makeEntropy() {
   mbedtls_sha256_free(&ctx);
   entropyHex = ""; const char* hx = "0123456789abcdef";
   for (uint8_t b : hash) { entropyHex += hx[b >> 4]; entropyHex += hx[b & 15]; }
-  volatile uint8_t* wipeBytes = bytes;
-  volatile uint8_t* wipeHash = hash;
-  for (size_t i = 0; i < sizeof(bytes); ++i) wipeBytes[i] = 0;
-  for (size_t i = 0; i < sizeof(hash); ++i) wipeHash[i] = 0;
-  hasHash = true; statusLine = "audit fingerprint ready"; resultPage = 0; lastAssessment = why; writeReport(true, why); drawResult();
+
+  if (!wc_nfkd(passphrase, passphraseNfkd, sizeof(passphraseNfkd))) {
+    statusLine = "passphrase not valid UTF-8";
+    passInput = true; hasHash = false;
+    drawPassInput();
+    return;
+  }
+  wc_mnemonic_from_entropy(bytes, mnemonic);
+  parseMnemonicWords();
+  uint8_t seed[64];
+  wc_seed_from_mnemonic(mnemonic, passphraseNfkd, seed);
+  wc_solana_address(seed, address);
+  wipeBytes(seed, 64);
+  wipeBytes(bytes, 32);
+  wipeBytes(hash, 32);
+
+  passInput = false;
+  hasHash = true; statusLine = "wallet generated"; resultPage = PAGE_FINGERPRINT; lastAssessment = why;
+  writeReport(true, why); drawResult();
 }
 
 void acceptRoll(char c) {
@@ -231,6 +302,12 @@ void acceptRoll(char c) {
 
 void clearEverything() {
   wipeRolls();
+  wipeChars(passphrase, sizeof(passphrase));
+  wipeChars(passphraseNfkd, sizeof(passphraseNfkd));
+  wipeChars(mnemonic, sizeof(mnemonic));
+  wipeChars(address, sizeof(address));
+  passLen = 0;
+  passInput = false;
   entropyHex = "";
   hasHash = false;
   showingResult = false;
@@ -294,11 +371,28 @@ void loop() {
     return;
   }
 
+  if (passInput) {
+    uint32_t now = millis();
+    if (ks.enter && now - lastEnterMs > 500) { lastEnterMs = now; buildWallet(); return; }
+    if (ks.del) {
+      if (passLen) { passphrase[--passLen] = 0; statusLine = "char erased"; }
+      else { passInput = false; statusLine = "passphrase cancelled"; drawMain(); return; }
+      drawPassInput();
+      return;
+    }
+    bool added = false;
+    for (auto c : ks.word) {
+      if (c >= 0x20 && c <= 0x7E && passLen < WC_PASSPHRASE_MAX_LEN - 1) { passphrase[passLen++] = c; added = true; }
+    }
+    if (added) { statusLine = "passphrase updated"; drawPassInput(); }
+    return;
+  }
+
   if (showingResult && diceCount == 1 && !prev && !next) { acceptRoll(dice); return; }
 
   uint32_t now = millis();
   if (showingResult && (prev || next) && now - lastNavMs > 180) {
-    resultPage = prev ? (resultPage + 5) % 6 : (resultPage + 1) % 6;
+    resultPage = prev ? (resultPage + PAGE_COUNT - 1) % PAGE_COUNT : (resultPage + 1) % PAGE_COUNT;
     lastNavMs = now;
     drawResult();
     return;
@@ -311,7 +405,12 @@ void loop() {
     return;
   }
 
-  if (ks.enter && now - lastEnterMs > 500) { lastEnterMs = now; makeEntropy(); return; }
+  if (ks.enter && now - lastEnterMs > 500) {
+    lastEnterMs = now;
+    if (vnBits >= 256) { passInput = true; showingResult = false; hasHash = false; statusLine = "type passphrase, Enter=confirm"; drawPassInput(); }
+    else { buildWallet(); }
+    return;
+  }
 
   if (!showingResult && diceCount == 1) acceptRoll(dice);
   else if (!showingResult && diceCount > 1) { statusLine = "ignored chord; press one key"; drawMain(); }
