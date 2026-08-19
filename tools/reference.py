@@ -135,12 +135,14 @@ def vn_extract(rolls: str, cap_bits: int = 256) -> bytes:
     assert len(bs) == cap_bits
     return int(bs, 2).to_bytes(cap_bits // 8, "big")
 
-def raw_extract(rolls: str, n_rolls: int = 100) -> bytes:
+def raw_extract(rolls: str, n_rolls: int = 100):
     acc = 0
     for c in rolls[:n_rolls]:
         acc = acc * 6 + (int(c) - 1)
-    # 6^100 < 2^259: top 32 bytes of the 33-byte big-endian value
-    return acc.to_bytes(33, "big")[:32]
+    L = 5 * (1 << 256)
+    if acc >= L:
+        return None  # batch rejected (re-roll all 100)
+    return (acc % (1 << 256)).to_bytes(32, "big")
 
 import random
 rng = random.Random(42)

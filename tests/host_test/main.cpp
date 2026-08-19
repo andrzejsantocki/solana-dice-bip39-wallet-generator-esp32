@@ -143,6 +143,26 @@ int main() {
     for (int j = 0; j < 32; ++j) sprintf(got + j * 2, "%02x", raw[j]);
     CHECK(strcmp(got, v->raw_entropy) == 0, "raw entropy");
     CHECK(wc_raw_extract(v->transcript, 99, raw) == 0, "raw <100 rolls rejected");
+    // extreme legal transcripts
+    char ones[100]; memset(ones, '1', sizeof(ones));
+    uint8_t zo[32]; memset(zo, 0xAA, sizeof(zo));
+    CHECK(wc_raw_extract(ones, 100, zo) == 256, "raw all-1s accepted");
+    bool allzero = true;
+    for (int j = 0; j < 32; ++j) if (zo[j] != 0) allzero = false;
+    CHECK(allzero, "raw all-1s -> zero entropy (no OOB)");
+    char sixes[100]; memset(sixes, '6', sizeof(sixes));
+    CHECK(wc_raw_extract(sixes, 100, zo) == WC_RAW_REJECTED, "raw all-6s batch rejected");
+    // acceptance rate sanity: 100 random transcripts, ~88.6% accepted
+    {
+      uint32_t lcg = 0x12345678;
+      int okc = 0;
+      char t[100];
+      for (int r = 0; r < 100; ++r) {
+        for (int i = 0; i < 100; ++i) { lcg = lcg * 1664525u + 1013904223u; t[i] = (char)('1' + (lcg >> 28) % 6); }
+        if (wc_raw_extract(t, 100, zo) == 256) okc++;
+      }
+      CHECK(okc > 60 && okc < 100, "raw acceptance ~88.6%");
+    }
     const char* dom = "DiceWallet audit v1";
     uint8_t dombuf[64];
     memcpy(dombuf, dom, strlen(dom));

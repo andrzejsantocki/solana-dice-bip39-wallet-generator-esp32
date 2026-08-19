@@ -43,14 +43,14 @@ At boot the device offers two extraction modes:
 
 - Von Neumann (default): roll pairs with equal values are dropped, the rest
   produce unbiased bits. Recommended. ~615 rolls typical for 256 bits.
-- Raw dice: 100 rolls converted by exact base-6 → binary (6^100 > 2^256).
-  Fair dice contribute ~258.5 bits of source entropy for the 256-bit value;
-  any physical bias of the dice passes straight into the entropy and reduces
-  that figure. The UI marks this "Not recommended" and the sanity page flags
-  it. The SD report records the chosen mode (`entropy_mode=`) plus
-  mode-specific fields (VN: `vn_bits`, `ties`, `used_vn_bits`,
-  `surplus_vn_bits`; raw: `raw_dice_rolls_used=100`,
-  `raw_dice_source_entropy_bits`).
+- Raw dice: 100 rolls -> X in [0, 6^100); L = 5·2^256. X >= L: whole batch
+  rejected (~11.4% of batches, UI says re-roll). X < L: entropy = X mod 2^256
+  — exactly uniform for fair independent dice (5 preimages per output), and
+  dice bias is NOT corrected by any part of this path. The UI marks raw mode
+  "Not recommended" and the sanity page flags it. The SD report records the
+  chosen mode (`entropy_mode=`) plus mode-specific fields (VN: `vn_bits`,
+  `ties`, `used_vn_bits`, `surplus_vn_bits`; raw: `raw_dice_rolls=100`,
+  conversion method, acceptance probability, fair-d6 contract).
 
 ## Radio posture
 

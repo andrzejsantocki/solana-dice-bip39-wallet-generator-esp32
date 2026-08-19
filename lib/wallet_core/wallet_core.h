@@ -19,10 +19,13 @@ void wc_secure_zero(void* p, size_t n);
 // Returns number of bits written (max 256).
 size_t wc_vn_extract(const char* rolls, size_t roll_count, uint8_t out[32]);
 
-// Raw dice extraction (bias NOT removed): exact base-6 to binary conversion
-// of 100 rolls (6^100 > 2^256), top 32 bytes taken. Fair dice: ~258.5 bits
-// of source entropy for 256 output bits. Returns 256 on success, 0 if fewer
-// than 100 valid rolls.
+// Raw dice extraction (bias NOT removed): exact uniform conversion for fair
+// independent d6. 100 rolls -> X in [0, 6^100). Let L = 5 * 2^256:
+//   X >= L          -> batch REJECTED (re-roll all 100)
+//   X < L           -> out = X mod 2^256 (exactly uniform, 5 preimages each)
+// Acceptance ~88.6%. FAIR DICE ONLY: bias is not corrected.
+// Returns: 256 ok, 0 insufficient valid rolls, WC_RAW_REJECTED reject.
+#define WC_RAW_REJECTED ((size_t)-1)
 size_t wc_raw_extract(const char* rolls, size_t roll_count, uint8_t out[32]);
 
 // Deterministic backup-quiz positions: 4 distinct indices 0..23 from

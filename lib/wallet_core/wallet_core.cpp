@@ -62,11 +62,14 @@ size_t wc_vn_extract(const char* rolls, size_t roll_count, uint8_t out[32]) {
 
 // ---------------- Raw dice extraction (bias kept) ----------------
 size_t wc_raw_extract(const char* rolls, size_t roll_count, uint8_t out[32]) {
-  // Exact base-6 to binary: acc = sum face*6^i over 100 rolls; 6^100 < 2^259
-  // so a 33-byte accumulator suffices; top 32 bytes form the entropy.
+  // Exact uniform conversion (fair independent d6 only):
+  // X = value of 100 base-6 digits; L = 5 * 2^256. 2^256 < 6^100 < 6*2^256,
+  // so exactly five 256-bit ranges fit in the outcome space.
+  //   X >= L: reject the whole batch (start 100 fresh rolls)
+  //   X <  L: out = X mod 2^256  (exactly uniform: 5 preimages per output)
   const size_t RAW_ROLLS = 100;
   memset(out, 0, 32);
-  uint8_t acc[33] = {0};
+  uint8_t acc[33] = {0};  // little-endian, 6^100 < 2^259
   size_t accBytes = 1;
   size_t used = 0;
   for (size_t i = 0; i < roll_count && used < RAW_ROLLS; ++i) {
@@ -81,8 +84,15 @@ size_t wc_raw_extract(const char* rolls, size_t roll_count, uint8_t out[32]) {
     if (carry) acc[accBytes++] = (uint8_t)carry;
     used++;
   }
-  if (used < RAW_ROLLS) return 0;
-  for (size_t i = 0; i < 32; ++i) out[i] = acc[accBytes - 1 - i];
+  if (used < RAW_ROLLS) { wc_secure_zero(acc, sizeof(acc)); return 0; }
+  // X = acc[32]*2^256 + low; X >= L (= 5*2^256) iff acc[32] >= 5
+  // (accBytes == 33 means acc[32] >= 1; max 6^100 < 6*2^256 so acc[32] <= 5)
+  if (accBytes >= 33 && acc[32] >= 5) {
+    wc_secure_zero(acc, sizeof(acc));
+    return WC_RAW_REJECTED;
+  }
+  // X mod 2^256, big-endian bytes (matches wc_vn_extract byte order)
+  for (size_t i = 0; i < 32; ++i) out[i] = acc[31 - i];
   wc_secure_zero(acc, sizeof(acc));
   return 256;
 }

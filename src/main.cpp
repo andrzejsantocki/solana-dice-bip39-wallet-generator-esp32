@@ -67,7 +67,7 @@ bool modeSelect = true;
 int modeCursor = 0;
 // typed-input modes wait for full key release before processing any event
 bool inputAwaitRelease = false;
-constexpr char FW_VERSION[] = "0.2.0";
+constexpr char FW_VERSION[] = "0.2.1";
 #ifndef FW_GIT_SHA
 #define FW_GIT_SHA "unknown"
 #endif
@@ -142,7 +142,17 @@ bool assessmentOK(String* why = nullptr) {
     if (why) *why = w;
     return false;
   }
-  if (entropyMode == MODE_RAW) w += "RAW MODE: dice bias kept. ";
+  if (entropyMode == MODE_RAW) {
+    uint8_t tmp[32];
+    size_t r = wc_raw_extract(rolls, rollCount, tmp);
+    wc_secure_zero(tmp, sizeof(tmp));
+    if (r == WC_RAW_REJECTED) {
+      w = "BLOCK: raw batch rejected, re-roll 100.";
+      if (why) *why = w;
+      return false;
+    }
+    w += "RAW MODE: dice bias kept. ";
+  }
   if (rollCount < 520 && entropyMode == MODE_VN) w += "WARN low roll count. ";
   for (int i = 0; i < 6; ++i) if (faceCount[i] == 0) w += "WARN missing face " + String(i + 1) + ". ";
   if (maxStreak >= 8) w += "WARN long streak. ";
@@ -336,8 +346,10 @@ void writeReport(bool ok, const String& why) {
     f.println("used_vn_bits=256");
     f.println("surplus_vn_bits=" + String(vnBits > 256 ? vnBits - 256 : 0));
   } else {
-    f.println("raw_dice_rolls_used=100");
-    f.println("raw_dice_source_entropy_bits=~258.5 (fair dice assumption)");
+    f.println("raw_dice_rolls=100");
+    f.println("raw_dice_conversion=exact_uniform_rejection (X >= 5*2^256 rejected)");
+    f.println("raw_dice_acceptance_probability=~88.6% (fair dice)");
+    f.println("raw_dice_contract=FAIR INDEPENDENT D6 ONLY - bias not corrected");
   }
   f.println("max_streak=" + String(maxStreak));
   f.println("faces=" + String(faceCount[0]) + "," + String(faceCount[1]) + "," + String(faceCount[2]) + "," + String(faceCount[3]) + "," + String(faceCount[4]) + "," + String(faceCount[5]));
@@ -379,7 +391,7 @@ void buildWallet() {
   String why; bool ok = assessmentOK(&why);
   if (!ok) {
     hasHash = false;
-    statusLine = entropyMode == MODE_VN ? "need 256 VN bits" : "need 86 rolls";
+    statusLine = entropyMode == MODE_VN ? "need 256 VN bits" : "need 100 rolls";
     entropyHex[0] = 0; resultPage = PAGE_SANITY; lastAssessment = why;
     writeReport(false, why);
     drawResult();
@@ -390,8 +402,15 @@ void buildWallet() {
   size_t bits = (entropyMode == MODE_VN)
                     ? wc_vn_extract(rolls, rollCount, bytes)
                     : wc_raw_extract(rolls, rollCount, bytes);
+  if (bits == WC_RAW_REJECTED) {
+    statusLine = "raw batch rejected: clear + re-roll";
+    hasHash = false;
+    wipeBytes(bytes, 32);
+    drawMain();
+    return;
+  }
   if (bits < 256) {
-    statusLine = entropyMode == MODE_VN ? "need 256 VN bits" : "need 86 rolls";
+    statusLine = entropyMode == MODE_VN ? "need 256 VN bits" : "need 100 rolls";
     hasHash = false;
     drawMain();
     return;

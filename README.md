@@ -16,8 +16,8 @@ Dice-entropy BIP39 wallet generator: physical d6 rolls → Von Neumann extractio
   - equal pair: discarded
   - first < second: bit 0
   - first > second: bit 1
-- raw dice mode: 100 rolls converted by exact base-6 → binary (6^100 > 2^256, top 32 bytes taken); fair dice give ~258.5 bits of source entropy; physical dice bias is NOT removed — the UI warns before selection
-- hard gate: at least 256 accepted VN bits (Von Neumann mode) or 100 rolls (raw mode)
+- raw dice mode: 100 rolls -> X in [0, 6^100); if X >= 5·2^256 the batch is rejected (re-roll), else entropy = X mod 2^256 — exactly uniform for fair dice, ~88.6% acceptance; physical dice bias is NOT corrected — the UI warns before selection
+- hard gate: at least 256 accepted VN bits (Von Neumann mode) or 100 rolls + accepted batch (raw mode)
 - no minimum fixed roll-count gate; the session buffer caps at 1024 rolls (fair dice never get near it; heavily biased dice in VN mode may hit it — clear and re-roll if so)
 - SHA-256 audit fingerprint display, split into large readable numbered lines
 - BIP39 mnemonic generation (24 words, English wordlist, 256-bit ENT)
@@ -50,10 +50,11 @@ physical d6 rolls
 
 At boot the device asks which extraction to use, with a short explanation of each.
 Von Neumann removes physical dice bias (equal pairs are dropped, ~615 rolls
-typical). Raw mode converts 100 dice values by exact base-6 → binary
-conversion (6^100 > 2^256) and keeps any bias of the physical dice — the UI
-marks it "Not recommended". With fair dice, raw mode provides ~258.5 bits of
-source entropy for the 256-bit value; biased dice reduce that.
+typical). Raw mode converts 100 dice values into X = value in [0, 6^100):
+batches with X >= 5·2^256 are rejected (~11.4% of batches — just re-roll),
+otherwise the entropy is X mod 2^256. For fair independent dice this is an
+exactly uniform 256-bit output; dice bias is NOT corrected — the UI marks
+raw mode "Not recommended".
 
 The displayed SHA-256 value is an audit fingerprint only:
 
