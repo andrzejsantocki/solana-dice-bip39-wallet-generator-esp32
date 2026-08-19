@@ -157,17 +157,23 @@ bool verifyRadios() {
   return wifiOff && btOff;
 }
 
-void drawHeader() {
-  M5Cardputer.Display.fillRect(0, 0, 240, 135, BG);
-  for (int i = 0; i < 240; i += 8) M5Cardputer.Display.drawFastVLine(i, 0, 135, (i % 24 == 0) ? 0x0AEE : 0x09AD);
+void drawHeader(bool full = true) {
+  if (full) {
+    M5Cardputer.Display.fillRect(0, 0, 240, 135, BG);
+    for (int i = 0; i < 240; i += 8) M5Cardputer.Display.drawFastVLine(i, 0, 135, (i % 24 == 0) ? 0x0AEE : 0x09AD);
+  }
   fillRound(4, 3, 232, 20, 6, PANEL2);
   M5Cardputer.Display.drawRoundRect(4, 3, 232, 20, 6, CYAN);
   textAt(12, 8, radiosOffOK ? "DICE ENTROPY // RADIOS OFF" : "RADIO STATE ERROR", radiosOffOK ? CYAN : RED, PANEL2);
   fillRound(210, 7, 18, 12, 3, showingResult ? GREEN : (sdOK ? MINT : GOLD));
 }
 
+// screen id for incremental redraw: full clear only when the screen changes,
+// otherwise the same screen repaints its own solid panels (no black flash)
+uint8_t drawnScreen = 0xFF;  // 0=menu 1=main 2=pass 3=quiz 4=result
+
 void drawBars() {
-  computeStats(); int baseX = 136, baseY = 42; label(baseX, 30, "d6 balance");
+  int baseX = 136, baseY = 42; label(baseX, 30, "d6 balance");
   for (int i = 0; i < 6; ++i) {
     int h = min<int>(44, faceCount[i]); int x = baseX + i * 15;
     M5Cardputer.Display.fillRect(x, baseY, 10, 48, 0x0B0F);
@@ -177,7 +183,8 @@ void drawBars() {
 }
 
 void drawModeSelect() {
-  drawHeader();
+  drawHeader(drawnScreen != 0);
+  drawnScreen = 0;
   fillRound(7, 29, 226, 66, 8, PANEL); M5Cardputer.Display.drawRoundRect(7, 29, 226, 66, 8, 0x3338);
   textAt(15, 37, "SELECT ENTROPY MODE", GOLD, PANEL);
   textAt(15, 51, modeCursor == 0 ? "> 1) Von Neumann" : "  1) Von Neumann", modeCursor == 0 ? CYAN : TEXT, PANEL);
@@ -198,7 +205,9 @@ void drawModeSelect() {
 
 void drawMain() {
   showingResult = false;
-  drawHeader(); computeStats();
+  drawHeader(drawnScreen != 1);
+  drawnScreen = 1;
+  computeStats();
   fillRound(7, 29, 118, 66, 8, PANEL); M5Cardputer.Display.drawRoundRect(7, 29, 118, 66, 8, 0x3338);
   textAt(15, 37, "rolls", MUTED, PANEL); textAt(15, 50, String(rollCount), entropyReady() ? GREEN : GOLD, PANEL, 2);
   textAt(68, 50, entropyMode == MODE_VN ? "VN " + String(vnBits) + "/256" : "RAW " + String(rollCount) + "/100",
@@ -213,7 +222,8 @@ void drawMain() {
 }
 
 void drawPassInput() {
-  drawHeader();
+  drawHeader(drawnScreen != 2);
+  drawnScreen = 2;
   fillRound(7, 29, 226, 66, 8, PANEL); M5Cardputer.Display.drawRoundRect(7, 29, 226, 66, 8, 0x3338);
   textAt(15, 37, passConfirmPhase ? "RE-ENTER PASSPHRASE" : "BIP39 PASSPHRASE", GOLD, PANEL);
   textAt(15, 51, "ASCII only, NFKD-normalized.", TEXT, PANEL);
@@ -229,12 +239,13 @@ void drawPassInput() {
 }
 
 void drawQuiz() {
-  drawHeader();
+  drawHeader(drawnScreen != 3);
+  drawnScreen = 3;
   fillRound(7, 29, 226, 66, 8, PANEL); M5Cardputer.Display.drawRoundRect(7, 29, 226, 66, 8, 0x3338);
   textAt(15, 37, "BACKUP CHECK " + String(quizStep + 1) + "/4", GOLD, PANEL);
   textAt(15, 51, "Type word #" + String(quizPos[quizStep] + 1), TEXT, PANEL);
   textAt(15, 65, "then press Enter.", MUTED, PANEL);
-  textAt(15, 81, quizBuf, CYAN, BG);
+  textAt(15, 81, quizBuf, CYAN, PANEL);
   fillRound(7, 103, 226, 27, 7, PANEL2); M5Cardputer.Display.drawRoundRect(7, 103, 226, 27, 7, 0x3338);
   textAt(15, 110, statusLine, MUTED, PANEL2);
   textAt(15, 121, "Enter=check  Del=" + String(quizLen ? "backspace" : "cancel"), TEXT, PANEL2);
@@ -242,9 +253,12 @@ void drawQuiz() {
 
 void drawResult() {
   showingResult = true;
-  drawHeader(); computeStats(); String why; bool ok = assessmentOK(&why);
+  // result pages change layout per page: always full clear
+  drawHeader();
+  drawnScreen = 4;
+  computeStats(); String why; bool ok = assessmentOK(&why);
   fillRound(8, 28, 224, 98, 10, PANEL); M5Cardputer.Display.drawRoundRect(8, 28, 224, 98, 10, ok ? GREEN : RED);
-  textAt(18, 36, "page " + String(resultPage + 1) + "/" + String(PAGE_COUNT) + "  arrows up/down", MUTED, PANEL);
+  textAt(18, 36, "page " + String(resultPage + 1) + "/" + String(PAGE_COUNT) + "  ;=up .=down", MUTED, PANEL);
   if (resultPage == PAGE_FINGERPRINT) {
     textAt(18, 48, "1) SHA256 FINGERPRINT", GREEN, PANEL);
     M5Cardputer.Display.setTextSize(2); M5Cardputer.Display.setTextColor(CYAN, PANEL);
