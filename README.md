@@ -41,7 +41,10 @@ The firmware never exports or displays the raw private key or seed. The mnemonic
 
 ```text
 physical d6 rolls
-→ Von Neumann extraction (default) OR raw dice extraction (3 bits/roll, bias kept)
+→ Von Neumann extraction (default: fixed face bias handled, rolls must
+  be independent) OR fair-d6 raw (100 rolls, exact base-6 rejection,
+  bias kept) OR Dice + HWRNG (100 entries hashed, XOR conditioned
+  ESP32-S3 SAR RNG)
 → rawEntropy[32]
 → BIP39 ENT (24 words + 8-bit checksum)
 → PBKDF2-HMAC-SHA512("mnemonic" || NFKD(passphrase), 2048 rounds) = seed[64]
@@ -124,7 +127,7 @@ Hardware-in-the-loop (scripted ~615-roll replay, fingerprint reproducibility) ha
 ## Verifying a binary matches the source
 
 The flashed firmware carries its own provenance: the boot menu shows
-`0.2.0 <git-sha>` and the SD report logs `firmware_git_sha=<git-sha>`.
+`0.3.0 <git-sha>` and the SD report logs `firmware_git_sha=<git-sha>`.
 A trailing `+` means the worktree was dirty at build time.
 
 To prove a `.bin` was compiled from this source, rebuild and compare:
@@ -165,7 +168,7 @@ for host tests — see `tests/build_host_test.sh`.
 # 1. get the exact release source (or the sha shown by a flashed device)
 git clone https://github.com/andrzejsantocki/solana-dice-bip39-wallet-generator-esp32.git
 cd solana-dice-bip39-wallet-generator-esp32
-git checkout v0.2.0                  # tag = released source
+git checkout v0.3.0                  # tag = released source
 
 # 2. audit the source (SECURITY.md summarizes the threat model)
 
@@ -184,10 +187,10 @@ python -m platformio run
 # 6. compare against the published artifact
 sha256sum .pio/build/cardputer_adv_launcher/firmware.bin
 # expect: releases/DiceWallet-cardputer-adv.bin.sha256 (repo) or the
-# .sha256 asset attached to the GitHub release v0.2.0
+# .sha256 asset attached to the GitHub release v0.3.0
 
 # 7. flash your OWN build and verify identity on-device:
-#    boot menu bottom line shows: 0.2.0 <git-sha>  ==  the tag commit
+#    boot menu bottom line shows: 0.3.0 <git-sha>  ==  the tag commit
 ```
 
 If the hash matches and the boot screen shows the tag commit, the

@@ -218,9 +218,9 @@ void drawModeSelect() {
   textAt(15, 71, modeCursor == 2 ? "> 3) Dice + HWRNG" : "  3) Dice + HWRNG", modeCursor == 2 ? CYAN : TEXT, PANEL);
   fillRound(7, 76, 226, 49, 6, PANEL2); M5Cardputer.Display.drawRoundRect(7, 76, 226, 49, 6, 0x3338);
   if (modeCursor == 0) {
-    textAt(15, 81, "Rolls read in pairs; equal", TEXT, PANEL2);
-    textAt(15, 93, "pairs dropped. Removes dice", TEXT, PANEL2);
-    textAt(15, 105, "bias. ~615 rolls needed.", TEXT, PANEL2);
+    textAt(15, 81, "Roll pairs; equal dropped.", TEXT, PANEL2);
+    textAt(15, 93, "Handles fixed face bias.", TEXT, PANEL2);
+    textAt(15, 105, "Rolls independent. ~615 typ.", TEXT, PANEL2);
   } else if (modeCursor == 1) {
     textAt(15, 81, "100 rolls, exact base-6.", ROSE, PANEL2);
     textAt(15, 93, "Bias NOT corrected.", ROSE, PANEL2);

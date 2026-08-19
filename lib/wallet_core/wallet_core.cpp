@@ -193,9 +193,17 @@ bool wc_hwrng_stream_finish(const uint8_t* const chunks[16], uint8_t out[32]) {
     if (out) wc_secure_zero(out, 32);
     return false;
   }
+  // validate EVERY pointer before touching any data: the comparison loop
+  // below may exit early, so partial validation is not enough
+  for (int i = 0; i < 16; ++i) {
+    if (!chunks[i]) {
+      wc_secure_zero(out, 32);
+      return false;
+    }
+  }
   bool allIdentical = true;
   for (int i = 1; i < 16; ++i) {
-    if (!chunks[i] || memcmp(chunks[0], chunks[i], 32) != 0) { allIdentical = false; break; }
+    if (memcmp(chunks[0], chunks[i], 32) != 0) { allIdentical = false; break; }
   }
   if (allIdentical) {
     wc_secure_zero(out, 32);

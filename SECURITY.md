@@ -69,6 +69,39 @@ At boot the device offers three extraction modes:
 
 - Wi-Fi and Bluetooth are disabled at boot, and state is re-verified: once after initialization, again immediately before passphrase entry, and again inside wallet derivation. Any failed verification shows `RADIO STATE ERROR` and blocks generation (fail closed).
 
+## Device trust / firmware integrity
+
+Build provenance answers one question only: does this binary correspond to
+this source? (boot screen shows `firmware_version git-sha`, rebuild + hash
+comparison is documented in the README). It does NOT answer: can
+unauthorized firmware run on this physical device?
+
+Current position (deliberate, open-verifiable-device model):
+
+- No Secure Boot, no flash encryption. Any USB-connected computer can
+  reflash the device; this is how users install verified builds.
+- No JTAG/debug lockdown. The USB-CDC console and flashing interface stay
+  open by design.
+- Consequence: a device left unattended is reflashable by anyone with
+  physical + USB access. Physical access is assumed to be game over.
+
+If this device is to guard substantial funds, the following need explicit
+decisions, not defaults:
+
+1. Secure Boot (signed app + trusted bootloader): prevents unauthenticated
+   firmware from booting, at the cost of making "flash your own build"
+   depend on signing keys.
+2. Flash encryption: hides firmware at rest; complicates the
+   open/verifiable-device model and brick-recovery.
+3. JTAG/console policy: efuse-level disable vs. open debugging.
+4. Firmware update trust: who may flash, and how updates are authenticated
+   (currently: manual, user-driven, verified-by-hash).
+5. Bootloader trust: the stock bootloader is not independently audited
+   here.
+
+Until these are decided, treat the device as a signing appliance you
+personally control — not as tamper-evident hardware.
+
 ## Compatibility caveat
 
 - Empty-passphrase wallets follow Phantom's documented m/44'/501'/0'/0' path.

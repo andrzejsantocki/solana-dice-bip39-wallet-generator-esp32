@@ -385,6 +385,17 @@ int main() {
     zeroed = true;
     for (int j = 0; j < 32; ++j) if (probe[j] != 0) zeroed = false;
     CHECK(zeroed, "hwrng NULL zeroes output");
+    // inner NULL: every pointer must be validated before any data is read
+    // (the comparison loop exits early, so this catches partial validation)
+    {
+      const uint8_t* inner[16];
+      for (int i = 0; i < 16; ++i) inner[i] = chunks[i];
+      inner[7] = nullptr;
+      CHECK(!wc_hwrng_stream_finish(inner, probe), "inner NULL chunk rejected");
+      zeroed = true;
+      for (int j = 0; j < 32; ++j) if (probe[j] != 0) zeroed = false;
+      CHECK(zeroed, "inner NULL zeroes output");
+    }
   }
   printf("wc_hwrng_stream_finish: health check checked\n");
 
