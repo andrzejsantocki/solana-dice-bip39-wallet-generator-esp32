@@ -171,14 +171,16 @@ def hybrid_hw_digest() -> bytes:
 ht = transcript[:100]
 hd = hybrid_dice_digest(ht)
 hw = hybrid_hw_digest()
-hent = bytes(a ^ b for a, b in zip(hw, hd))
-hfp = sha256(b"DiceWallet audit v1" + hent).hex()
-hmn = mnemonic_from_entropy(hent)
+hws = ",".join(str((i % 6) + 1) for i in range(10))  # 1,2,3,4,5,6,1,2,3,4
+he = bytes(a ^ b for a, b in zip(hw, hd))
+hfp = sha256(b"DiceWallet audit v1" + he).hex()
+hmn = mnemonic_from_entropy(he)
 hsd = seed_from_mnemonic(hmn, "")
 hkL = solana_keypair(hsd)
 haddr = base58(pub_pynacl(hkL))
 results["hybrid"] = {"transcript": ht, "dice_digest": hd.hex(),
-                     "hw_digest": hw.hex(), "entropy": hent.hex(),
+                     "hw_digest": hw.hex(), "hw_sample": hws,
+                     "entropy": he.hex(),
                      "fingerprint": hfp, "mnemonic": hmn, "address": haddr}
 print("HYBRID OK: 100 rolls ->", haddr)
 

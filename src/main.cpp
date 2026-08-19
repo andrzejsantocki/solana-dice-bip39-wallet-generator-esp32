@@ -67,6 +67,8 @@ bool modeSelect = true;
 int modeCursor = 0;
 // typed-input modes wait for full key release before processing any event
 bool inputAwaitRelease = false;
+// 10 visible 1-6 values derived from the first HWRNG block (report display)
+char hwSample[24];
 constexpr char FW_VERSION[] = "0.3.0";
 #ifndef FW_GIT_SHA
 #define FW_GIT_SHA "unknown"
@@ -285,8 +287,8 @@ void drawQuiz() {
 
 void drawResult() {
   showingResult = true;
-  // result pages change layout per page: always full clear
-  drawHeader();
+  // single solid panel shared by every page: incremental repaint is safe
+  drawHeader(drawnScreen != 4);
   drawnScreen = 4;
   computeStats(); String why; bool ok = assessmentOK(&why);
   fillRound(8, 28, 224, 98, 10, PANEL); M5Cardputer.Display.drawRoundRect(8, 28, 224, 98, 10, ok ? GREEN : RED);
@@ -352,6 +354,7 @@ void writeReport(bool ok, const String& why) {
   SD.mkdir("/dice_wallet");
   File f = SD.open("/dice_wallet/report.txt", FILE_APPEND);
   if (!f) return;
+  f.println();
   f.println("--- dice entropy sanity report ---");
   f.println(ok ? "SANITY_OK" : "SANITY_BLOCK");
   f.println(why);
@@ -380,6 +383,7 @@ void writeReport(bool ok, const String& why) {
     f.println("hybrid_domain_version=1");
     f.println("roll_transcript_saved=false");
     f.println("hwrng_samples_saved=false");
+    f.println("hwrng_sample=" + String(hwSample[0] ? hwSample : "n/a") + " (display-only uniqueness check)");
     f.println("source_digests_saved=false");
   }
   f.println("max_streak=" + String(maxStreak));
@@ -412,6 +416,7 @@ void parseMnemonicWords() {
 }
 
 void buildWallet() {
+  hwSample[0] = 0;  // fresh per build: report shows a sample only from this run
   if (!verifyRadios()) {
     radiosOffOK = false; hasHash = false;
     statusLine = "RADIO STATE ERROR - blocked";
@@ -460,7 +465,7 @@ void buildWallet() {
       }
       // HWRNG collected at the last possible moment, inside the radio-
       // verified critical section. Catastrophic failure blocks generation.
-      if (!wc_platform_hwrng_digest(hwD)) {
+      if (!wc_platform_hwrng_digest(hwD, hwSample)) {
         hasHash = false;
         statusLine = "HWRNG FAILURE - BLOCKED";
         wipeBytes(hwD, 32);
@@ -656,6 +661,7 @@ void acceptRoll(char c) {
 void clearEverything() {
   wipeRolls();
   wipeChars(tailBuf, sizeof(tailBuf));
+  wipeChars(hwSample, sizeof(hwSample));
   wipeChars(passphrase, sizeof(passphrase));
   wipeChars(passphraseConfirm, sizeof(passphraseConfirm));
   wipeChars(passphraseNfkd, sizeof(passphraseNfkd));

@@ -146,6 +146,7 @@
   "transcript": "6116322261665154111225515266654245312643322311413353164514153653526116231214346323326366615625622443",
   "dice_digest": "53948fad1d0dffa79c45c4744a1f66127388b9baa004509af28775785033d986",
   "hw_digest": "ad69def66357253462d5e34138522cd2fecc6103d7f4ef29c6d26f44a5e714de",
+  "hw_sample": "1,2,3,4,5,6,1,2,3,4",
   "entropy": "fefd515b7e5ada93fe902735724d4ac08d44d8b977f0bfb334551a3cf5d4cd58",
   "fingerprint": "c92246a3ef3b9ba7535473ea0fc983c8744535dfface88d18c05ffe8ec95532f",
   "mnemonic": "year tunnel fine witness pumpkin enemy where agent cube mystery famous library stairs hobby total wrap sausage often best crucial soon tuna cube afford",

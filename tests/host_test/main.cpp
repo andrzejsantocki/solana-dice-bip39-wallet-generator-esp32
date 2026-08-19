@@ -377,7 +377,7 @@ int main() {
       for (int j = 0; j < 32; ++j) pool[i][j] = (uint8_t)(i * 32 + j);
     CHECK(wc_hwrng_stream_finish(chunks, out), "hwrng fake stream accepted");
     uint8_t ref[32];
-    CHECK(wc_platform_hwrng_digest(ref), "hwrng platform fake ok");
+    CHECK(wc_platform_hwrng_digest(ref, NULL), "hwrng platform fake ok");
     CHECK(memcmp(out, ref, 32) == 0, "hwrng conditioner matches platform fake");
     // NULL contract
     uint8_t probe[32]; memset(probe, 0xCC, sizeof(probe));
@@ -396,9 +396,16 @@ int main() {
     CHECK(wc_hybrid_dice_digest(v->transcript, strlen(v->transcript), dice), "hybrid dice digest");
     for (int j = 0; j < 32; ++j) sprintf(got + j * 2, "%02x", dice[j]);
     CHECK(strcmp(got, v->dice_digest) == 0, "hybrid dice digest vector");
-    CHECK(wc_platform_hwrng_digest(hw), "hybrid hw digest ok");
+    CHECK(wc_platform_hwrng_digest(hw, NULL), "hybrid hw digest ok");
     for (int j = 0; j < 32; ++j) sprintf(got + j * 2, "%02x", hw[j]);
     CHECK(strcmp(got, v->hw_digest) == 0, "hybrid hw digest vector");
+    // 10-value display sample from the first block (fake stream -> deterministic)
+    {
+      char smp[24];
+      uint8_t dummy[32];
+      CHECK(wc_platform_hwrng_digest(dummy, smp), "hwrng sample ok");
+      CHECK(strcmp(smp, v->hw_sample) == 0, "hybrid hw sample vector");
+    }
     wc_hybrid_combine(hw, dice, ent);
     for (int j = 0; j < 32; ++j) sprintf(got + j * 2, "%02x", ent[j]);
     CHECK(strcmp(got, v->entropy) == 0, "hybrid entropy vector");
@@ -443,7 +450,7 @@ int main() {
     for (int j = 1; j < 100; j += 2) alts[j] = '6';
     uint8_t d1[32], da[32], e1[32], ea[32];
     uint8_t hw2[32];
-    CHECK(wc_platform_hwrng_digest(hw2), "fault B hw");
+    CHECK(wc_platform_hwrng_digest(hw2, NULL), "fault B hw");
     CHECK(wc_hybrid_dice_digest(ones, 100, d1), "fault B digest");
     wc_hybrid_combine(hw2, d1, e1);
     CHECK(wc_hybrid_dice_digest(alts, 100, da), "fault C digest");

@@ -73,7 +73,12 @@ bool wc_hwrng_stream_finish(const uint8_t* const chunks[16], uint8_t out[32]);
 // Real device: SAR entropy source enabled, 16x32 bytes collected and
 // passed to wc_hwrng_stream_finish, catastrophic-failure fail-closed.
 // Host tests: deterministic fake stream through the same conditioner.
-extern "C" bool wc_platform_hwrng_digest(uint8_t out[32]);
+// sample_out (optional): "5,2,6,1,..." ten 1-6 values derived from the
+// first HWRNG block (byte % 6 + 1), for a human-visible uniqueness check.
+// Zeroed on failure. Publishing 10 values does not weaken the wallet: the
+// final entropy is SHA256(stream) XOR SHA256(secret dice transcript), and
+// revealing 10 of 512 stream bytes leaves the hash preimage at full strength.
+extern "C" bool wc_platform_hwrng_digest(uint8_t out[32], char sample_out[24]);
 
 // BIP39: 256-bit entropy -> 24-word mnemonic in out (WC_MNEMONIC_MAX_LEN).
 void wc_mnemonic_from_entropy(const uint8_t ent[32], char* out);

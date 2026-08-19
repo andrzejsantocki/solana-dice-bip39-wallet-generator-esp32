@@ -19,12 +19,19 @@ void wc_sha512(const uint8_t* data, size_t len, uint8_t out[64]) {
 // distinct, so the shared production health check passes. Runs through the
 // SAME conditioner (wc_hwrng_stream_finish) as the ESP layer, so the
 // health-check + domain-separation logic is exercised on CI.
-bool wc_platform_hwrng_digest(uint8_t out[32]) {
+bool wc_platform_hwrng_digest(uint8_t out[32], char sample_out[24]) {
   const uint8_t* chunks[16];
   uint8_t pool[16][32];
   for (int i = 0; i < 16; ++i) {
     for (int j = 0; j < 32; ++j) pool[i][j] = (uint8_t)(i * 32 + j);
     chunks[i] = pool[i];
   }
-  return wc_hwrng_stream_finish(chunks, out);
+  bool ok = wc_hwrng_stream_finish(chunks, out);
+  if (ok && sample_out) {
+    for (int i = 0; i < 10; ++i) {
+      sample_out[i * 2] = (char)('1' + pool[0][i] % 6);
+      sample_out[i * 2 + 1] = (i == 9) ? '\0' : ',';
+    }
+  }
+  return ok;
 }

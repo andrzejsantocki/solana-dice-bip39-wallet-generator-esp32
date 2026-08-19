@@ -31,12 +31,13 @@ void wc_sha512(const uint8_t* data, size_t len, uint8_t out[64]) {
 // hybrid path.
 // Single cleanup path: no early return between enable and disable, chunk
 // buffers always wiped, failed runs zero the output.
-extern "C" bool wc_platform_hwrng_digest(uint8_t out[32]) {
+extern "C" bool wc_platform_hwrng_digest(uint8_t out[32], char sample_out[24]) {
   const uint8_t* chunks[16];
   uint8_t pool[16][32];
   bool ok = false;
 
   wc_secure_zero(out, 32);
+  if (sample_out) wc_secure_zero(sample_out, 24);
   bootloader_random_enable();
   for (int i = 0; i < 16; ++i) {
     esp_fill_random(pool[i], 32);
@@ -45,6 +46,12 @@ extern "C" bool wc_platform_hwrng_digest(uint8_t out[32]) {
   ok = wc_hwrng_stream_finish(chunks, out);
   bootloader_random_disable();  // unconditional: no early return above this
 
+  if (ok && sample_out) {
+    for (int i = 0; i < 10; ++i) {
+      sample_out[i * 2] = (char)('1' + pool[0][i] % 6);
+      sample_out[i * 2 + 1] = (i == 9) ? '\0' : ',';
+    }
+  }
   wc_secure_zero(pool, sizeof(pool));
   if (!ok) wc_secure_zero(out, 32);
   return ok;
