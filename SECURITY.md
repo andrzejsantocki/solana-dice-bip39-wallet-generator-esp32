@@ -39,7 +39,7 @@
 
 ## Entropy mode fork
 
-At boot the device offers two extraction modes:
+At boot the device offers three extraction modes:
 
 - Von Neumann (default): roll pairs with equal values are dropped, the rest
   produce unbiased bits. Recommended. ~615 rolls typical for 256 bits.

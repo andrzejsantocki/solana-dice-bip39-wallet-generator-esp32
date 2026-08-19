@@ -61,10 +61,18 @@ bool wc_hybrid_dice_digest(const char* rolls, size_t roll_count, uint8_t out[32]
 // ENT = H XOR D. No allocations, no arithmetic, no secret-dependent branches.
 void wc_hybrid_combine(const uint8_t hw[32], const uint8_t dice[32], uint8_t out[32]);
 
+// Conditioned HWRNG digest for hybrid mode. Collects 16 x 32-byte chunks
+// from the SAR entropy source, hands them to the shared streaming
+// conditioner (domain separation + all-identical-blocks health check).
+// Single cleanup path: bootloader_random_disable() always runs, chunk
+// buffers always wiped, failed runs zero the output. This is the only
+// ESP-hardware part of the hybrid path; the conditioner is host-tested.
+bool wc_hwrng_stream_finish(const uint8_t* const chunks[16], uint8_t out[32]);
+
 // Platform hook: conditioned ESP32-S3 HWRNG digest.
-// Real device: SAR entropy source enabled, 16x32 bytes streamed through
-// SHA-256 (domain-separated), catastrophic-failure health check, fail-closed.
-// Host tests: deterministic fake stream.
+// Real device: SAR entropy source enabled, 16x32 bytes collected and
+// passed to wc_hwrng_stream_finish, catastrophic-failure fail-closed.
+// Host tests: deterministic fake stream through the same conditioner.
 extern "C" bool wc_platform_hwrng_digest(uint8_t out[32]);
 
 // BIP39: 256-bit entropy -> 24-word mnemonic in out (WC_MNEMONIC_MAX_LEN).

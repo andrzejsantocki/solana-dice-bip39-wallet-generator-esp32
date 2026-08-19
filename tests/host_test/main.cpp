@@ -354,6 +354,40 @@ int main() {
   }
   printf("wc_hybrid_combine: checked\n");
 
+  // 12b) wc_hwrng_stream_finish: health check + domain structure (shared core)
+  {
+    const uint8_t* chunks[16];
+    uint8_t pool[16][32];
+    uint8_t out[32];
+    // catastrophic failure: all 16 blocks identical (stuck constant) -> fail closed
+    for (int i = 0; i < 16; ++i) {
+      for (int j = 0; j < 32; ++j) pool[i][j] = 0xA5;
+      chunks[i] = pool[i];
+    }
+    memset(out, 0xCC, sizeof(out));
+    CHECK(!wc_hwrng_stream_finish(chunks, out), "hwrng all-identical blocks rejected");
+    bool zeroed = true;
+    for (int j = 0; j < 32; ++j) if (out[j] != 0) zeroed = false;
+    CHECK(zeroed, "hwrng failure zeroes output");
+    // one distinct chunk -> accepted
+    pool[15][0] ^= 0x01;
+    CHECK(wc_hwrng_stream_finish(chunks, out), "hwrng one-distinct-block accepted");
+    // rebuild the deterministic fake stream -> digest equals the platform fake
+    for (int i = 0; i < 16; ++i)
+      for (int j = 0; j < 32; ++j) pool[i][j] = (uint8_t)(i * 32 + j);
+    CHECK(wc_hwrng_stream_finish(chunks, out), "hwrng fake stream accepted");
+    uint8_t ref[32];
+    CHECK(wc_platform_hwrng_digest(ref), "hwrng platform fake ok");
+    CHECK(memcmp(out, ref, 32) == 0, "hwrng conditioner matches platform fake");
+    // NULL contract
+    uint8_t probe[32]; memset(probe, 0xCC, sizeof(probe));
+    CHECK(!wc_hwrng_stream_finish(NULL, probe), "hwrng NULL chunks rejected");
+    zeroed = true;
+    for (int j = 0; j < 32; ++j) if (probe[j] != 0) zeroed = false;
+    CHECK(zeroed, "hwrng NULL zeroes output");
+  }
+  printf("wc_hwrng_stream_finish: health check checked\n");
+
   // 13) full hybrid KAT: fake HWRNG + transcript -> entropy -> mnemonic -> address
   {
     const HybridVector* v = &HYBRID_VECTOR;
@@ -368,6 +402,17 @@ int main() {
     wc_hybrid_combine(hw, dice, ent);
     for (int j = 0; j < 32; ++j) sprintf(got + j * 2, "%02x", ent[j]);
     CHECK(strcmp(got, v->entropy) == 0, "hybrid entropy vector");
+    // audit fingerprint over the hybrid entropy (same domain as firmware)
+    {
+      static const uint8_t dom[] = "DiceWallet audit v1";
+      uint8_t fpbuf[sizeof(dom) - 1 + 32];
+      memcpy(fpbuf, dom, sizeof(dom) - 1);
+      memcpy(fpbuf + sizeof(dom) - 1, ent, 32);
+      uint8_t fp[32];
+      wc_sha256(fpbuf, sizeof(fpbuf), fp);
+      for (int j = 0; j < 32; ++j) sprintf(got + j * 2, "%02x", fp[j]);
+      CHECK(strcmp(got, v->fingerprint) == 0, "hybrid fingerprint vector");
+    }
     char mn[WC_MNEMONIC_MAX_LEN];
     wc_mnemonic_from_entropy(ent, mn);
     CHECK(strcmp(mn, v->mnemonic) == 0, "hybrid mnemonic vector");

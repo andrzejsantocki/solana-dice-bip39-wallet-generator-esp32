@@ -9,7 +9,7 @@ Dice-entropy BIP39 wallet generator: physical d6 rolls → Von Neumann extractio
 ## Current scope
 
 - colorful 240x135 Cardputer ADV UI
-- boot fork: select entropy mode with arrows — Von Neumann (unbiased, ~615 rolls) or raw dice (fast, 86 rolls, bias kept)
+- boot fork: select entropy mode with arrows — 1) Von Neumann (unbiased, ~615 rolls), 2) Fair d6 (100 rolls, exact base-6 rejection, bias NOT corrected), 3) Dice + HWRNG (100 entries hashed + ESP32-S3 SAR RNG)
 - physical d6 input uses a strict press-release FSM: one complete keypress = one roll; dice-key chords are ignored
 - typed input (passphrase, backup check) uses per-key edge detection: overlapping/chorded keys are rejected with an explicit warning, never silently merged or dropped
 - Von Neumann extraction from roll pairs:

@@ -182,6 +182,35 @@ bool wc_hybrid_dice_digest(const char* rolls, size_t roll_count, uint8_t out[32]
   return true;
 }
 
+// Domain-separated streaming conditioner + catastrophic-failure health check
+// for the HWRNG path. chunks: 16 pointers to 32-byte blocks. All 16 blocks
+// identical (e.g. stuck constant) -> false, out zeroed. Shared by the ESP
+// platform layer (real RNG) and host tests (deterministic fakes), so the
+// health logic and domain structure are CI-testable. Only the esp_fill_random
+// / bootloader_random_enable plumbing remains hardware-specific.
+bool wc_hwrng_stream_finish(const uint8_t* const chunks[16], uint8_t out[32]) {
+  if (!chunks || !out || !chunks[0]) {
+    if (out) wc_secure_zero(out, 32);
+    return false;
+  }
+  bool allIdentical = true;
+  for (int i = 1; i < 16; ++i) {
+    if (!chunks[i] || memcmp(chunks[0], chunks[i], 32) != 0) { allIdentical = false; break; }
+  }
+  if (allIdentical) {
+    wc_secure_zero(out, 32);
+    return false;
+  }
+  static const uint8_t domain[] = "DiceWallet hybrid hwrng v1";  // 26 bytes
+  const size_t DLEN = sizeof(domain) - 1;
+  uint8_t buf[DLEN + 16 * 32];
+  memcpy(buf, domain, DLEN);
+  for (int i = 0; i < 16; ++i) memcpy(buf + DLEN + (size_t)i * 32, chunks[i], 32);
+  wc_sha256(buf, sizeof(buf), out);
+  wc_secure_zero(buf, sizeof(buf));
+  return true;
+}
+
 // ---------------- hybrid combiner ----------------
 void wc_hybrid_combine(const uint8_t hw[32], const uint8_t dice[32], uint8_t out[32]) {
   for (size_t i = 0; i < 32; ++i) out[i] = (uint8_t)(hw[i] ^ dice[i]);

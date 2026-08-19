@@ -16,13 +16,15 @@ void wc_sha512(const uint8_t* data, size_t len, uint8_t out[64]) {
 
 // Deterministic fake HWRNG for hybrid-mode tests: stream = 512 bytes
 // 0x00 0x01 0x02 ... 0xFF 0x00 0x01 ... (byte k & 0xFF). All 16 chunks
-// distinct, so the production health check would pass. Domain-separated
-// digest identical in structure to src/wc_platform_esp.cpp.
+// distinct, so the shared production health check passes. Runs through the
+// SAME conditioner (wc_hwrng_stream_finish) as the ESP layer, so the
+// health-check + domain-separation logic is exercised on CI.
 bool wc_platform_hwrng_digest(uint8_t out[32]) {
-  static const uint8_t domain[] = "DiceWallet hybrid hwrng v1";  // 26 bytes
-  uint8_t buf[sizeof(domain) - 1 + 512];
-  memcpy(buf, domain, sizeof(domain) - 1);
-  for (int i = 0; i < 512; ++i) buf[sizeof(domain) - 1 + i] = (uint8_t)i;
-  sha256_compute(buf, sizeof(buf), out);
-  return true;
+  const uint8_t* chunks[16];
+  uint8_t pool[16][32];
+  for (int i = 0; i < 16; ++i) {
+    for (int j = 0; j < 32; ++j) pool[i][j] = (uint8_t)(i * 32 + j);
+    chunks[i] = pool[i];
+  }
+  return wc_hwrng_stream_finish(chunks, out);
 }

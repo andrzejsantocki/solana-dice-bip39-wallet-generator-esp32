@@ -491,7 +491,12 @@ void buildWallet() {
   wc_quiz_positions(hash, quizPos);
 
   if (!wc_nfkd(passphrase, passphraseNfkd, sizeof(passphraseNfkd))) {
-    statusLine = "passphrase not valid UTF-8";
+    // normalization failure: wipe the entropy and fingerprint that now exist
+    // on this path — every exit after entropy material exists must wipe it
+    wc_secure_zero(bytes, sizeof(bytes));
+    wc_secure_zero(hash, sizeof(hash));
+    entropyHex[0] = 0;
+    statusLine = "passphrase normalization failed";
     passInput = true; hasHash = false;
     drawPassInput();
     return;
