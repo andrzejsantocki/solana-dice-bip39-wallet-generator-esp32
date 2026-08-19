@@ -108,6 +108,37 @@ CI runs the host tests on every push/PR — with AddressSanitizer + UndefinedBeh
 
 Hardware-in-the-loop (scripted ~615-roll replay, fingerprint reproducibility) has not been performed — no device available.
 
+## Verifying a binary matches the source
+
+The flashed firmware carries its own provenance: the boot menu shows
+`0.2.0 <git-sha>` and the SD report logs `firmware_git_sha=<git-sha>`.
+A trailing `+` means the worktree was dirty at build time.
+
+To prove a `.bin` was compiled from this source, rebuild and compare:
+
+```bash
+git checkout <git-sha>        # the sha shown by the firmware
+python -m platformio run      # clean rebuild
+sha256sum .pio/build/cardputer_adv_launcher/firmware.bin
+# compare with:
+cat releases/DiceWallet-cardputer-adv.bin.sha256
+```
+
+Builds are deterministic on the pinned toolchain (platform
+`espressif32@6.4.0`, all lib versions pinned in `platformio.ini`) —
+identical hash means byte-identical firmware. The committed
+`releases/` bin displays the sha of the last *source* commit; the
+artifact commit that adds the bin itself contains no code changes.
+
+Caveats:
+
+- GitHub release assets are built by CI from the tag commit (clean
+  tree, sha = tag commit) and are the authoritative distribution
+  channel. The committed `releases/` bin is a convenience build.
+- Provenance ties a binary to source *commit*; it does not by itself
+  prove the source is safe — that's what the audit/SECURITY review is
+  for.
+
 ## Build
 
 ```bash
