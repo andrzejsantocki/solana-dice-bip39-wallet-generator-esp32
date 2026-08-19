@@ -18,12 +18,12 @@
 
 #define PAGE_FINGERPRINT 0
 #define PAGE_MNEMONIC_FIRST 1
-#define PAGE_MNEMONIC_COUNT 8
-#define PAGE_PASSPHRASE 9
-#define PAGE_ADDRESS 10
-#define PAGE_SANITY 11
-#define PAGE_SD 12
-#define PAGE_COUNT 13
+#define PAGE_MNEMONIC_COUNT 4   // 6 words per page
+#define PAGE_PASSPHRASE 5
+#define PAGE_ADDRESS 6
+#define PAGE_SANITY 7
+#define PAGE_SD 8
+#define PAGE_COUNT 9
 
 namespace {
 constexpr uint16_t BG = 0x08AC, PANEL = 0x118F, PANEL2 = 0x19F3;
@@ -302,17 +302,18 @@ void drawResult() {
     snprintf(fl, sizeof(fl), "3|%.16s", entropyHex + 32); M5Cardputer.Display.drawString(fl, 12, 93);
     snprintf(fl, sizeof(fl), "4|%.16s", entropyHex + 48); M5Cardputer.Display.drawString(fl, 12, 109);
   } else if (resultPage >= PAGE_MNEMONIC_FIRST && resultPage < PAGE_MNEMONIC_FIRST + PAGE_MNEMONIC_COUNT) {
-    uint8_t base = (resultPage - PAGE_MNEMONIC_FIRST) * 3;
-    textAt(18, 46, "MNEMONIC " + String(base + 1) + "-" + String(base + 3) + " / 24", GREEN, PANEL);
-    for (int k = 0; k < 3; ++k) {
+    uint8_t base = (resultPage - PAGE_MNEMONIC_FIRST) * 6;
+    textAt(18, 38, "MNEMONIC " + String(base + 1) + "-" + String(base + 6) + " / 24", GREEN, PANEL);
+    textAt(18, 46, "BIP39; Solana SLIP-0010 m/44'/501'", MUTED, PANEL);
+    for (int k = 0; k < 6; ++k) {
       uint16_t i = base + k;
       if (i >= 24) break;
       char wordLine[48];
       snprintf(wordLine, sizeof(wordLine), "%u. %.*s", i + 1, (int)wordLen[i], mnemonic + wordOff[i]);
-      textAt(18, 60 + k * 14, wordLine, TEXT, PANEL);
+      textAt(18, 56 + k * 10, wordLine, TEXT, PANEL);
       wc_secure_zero(wordLine, sizeof(wordLine));
     }
-    textAt(18, 108, backupVerified ? "Backup verified." : "Write words down. Enter=check", backupVerified ? GREEN : ROSE, PANEL);
+    textAt(18, 116, backupVerified ? "Backup verified." : "Write words down. Enter=check", backupVerified ? GREEN : ROSE, PANEL);
   } else if (resultPage == PAGE_PASSPHRASE) {
     textAt(18, 50, "3) PASSPHRASE", GOLD, PANEL);
     textAt(18, 64, passLen1 ? "set (never shown)" : "empty (default)", TEXT, PANEL);
@@ -327,12 +328,13 @@ void drawResult() {
       textAt(18, 88, "press Enter, type 4 words.", TEXT, PANEL);
     } else {
       textAt(18, 46, "4) SOLANA ADDRESS", CYAN, PANEL);
-      char al[17];
-      snprintf(al, sizeof(al), "%.16s", address); textAt(18, 60, al, TEXT, PANEL);
-      snprintf(al, sizeof(al), "%.16s", address + 16); textAt(18, 72, al, TEXT, PANEL);
-      snprintf(al, sizeof(al), "%.16s", address + 32); textAt(18, 84, al, TEXT, PANEL);
-      textAt(18, 102, "Path m/44'/501'/0'/0'", MUTED, PANEL);
-      textAt(18, 112, passLen1 ? "passphrase restore: verify" : "Phantom path-compatible", passLen1 ? ROSE : MUTED, PANEL);
+      M5Cardputer.Display.setTextSize(2); M5Cardputer.Display.setTextColor(TEXT, PANEL);
+      char al[22];
+      snprintf(al, sizeof(al), "1|%.19s", address); M5Cardputer.Display.drawString(al, 12, 58);
+      snprintf(al, sizeof(al), "2|%.19s", address + 19); M5Cardputer.Display.drawString(al, 12, 74);
+      snprintf(al, sizeof(al), "3|%.6s", address + 38); M5Cardputer.Display.drawString(al, 12, 90);
+      textAt(18, 108, "Path m/44'/501'/0'/0'", MUTED, PANEL);
+      textAt(18, 118, passLen1 ? "passphrase restore: verify" : "Phantom path-compatible", passLen1 ? ROSE : MUTED, PANEL);
     }
   } else if (resultPage == PAGE_SANITY) {
     textAt(18, 50, ok ? "5) SANITY: OK" : "5) SANITY: BLOCK", ok ? GREEN : RED, PANEL);
