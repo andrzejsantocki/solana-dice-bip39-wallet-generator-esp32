@@ -225,9 +225,9 @@ void drawPassInput() {
   drawHeader(drawnScreen != 2);
   drawnScreen = 2;
   fillRound(7, 29, 226, 66, 8, PANEL); M5Cardputer.Display.drawRoundRect(7, 29, 226, 66, 8, 0x3338);
-  textAt(15, 37, passConfirmPhase ? "RE-ENTER PASSPHRASE" : "BIP39 PASSPHRASE", GOLD, PANEL);
+  textAt(15, 37, passConfirmPhase ? "RE-ENTER (25th unique word)" : "BIP39 PASSPHRASE (25th unique word)", GOLD, PANEL);
   textAt(15, 51, "ASCII only, NFKD-normalized.", TEXT, PANEL);
-  textAt(15, 63, "Empty = default wallet.", MUTED, PANEL);
+  textAt(15, 63, "OPTIONAL: empty = default wallet.", GREEN, PANEL);
   textAt(15, 77, passConfirmPhase ? "Must match first entry." : "Entered twice, masked.", TEXT, PANEL);
   char maskBuf[WC_PASSPHRASE_MAX_LEN];
   size_t showLen = passLen < sizeof(maskBuf) - 1 ? passLen : sizeof(maskBuf) - 1;
