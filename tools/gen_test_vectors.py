@@ -45,6 +45,13 @@ out.append("typedef struct { const char* transcript; const char* entropy; "
            "const char* raw_entropy; const char* fingerprint; const char* mnemonic; const char* address; } VnVector;")
 out.append(f'static const VnVector VN_VECTOR = {{"{vn["transcript"]}", "{vn["entropy"]}", "{vn["raw_entropy"]}", "{vn["fingerprint"]}", "{vn["mnemonic"]}", "{vn["address"]}"}};')
 out.append("")
+
+hy = v["hybrid"]
+out.append("typedef struct { const char* transcript; const char* dice_digest; "
+           "const char* hw_digest; const char* entropy; const char* fingerprint; "
+           "const char* mnemonic; const char* address; } HybridVector;")
+out.append(f'static const HybridVector HYBRID_VECTOR = {{"{hy["transcript"]}", "{hy["dice_digest"]}", "{hy["hw_digest"]}", "{hy["entropy"]}", "{hy["fingerprint"]}", "{hy["mnemonic"]}", "{hy["address"]}"}};')
+out.append("")
 out.append("#define BIP39_VECTOR_COUNT %d" % len(v["bip39"]))
 out.append("#define SLIP10_VECTOR_COUNT %d" % len(v["slip10"]))
 out.append("#define SOLANA_VECTOR_COUNT %d" % len(v["solana"]))

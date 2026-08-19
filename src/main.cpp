@@ -61,19 +61,24 @@ bool hasHash = false, showingResult = false, sdOK = false, clearArmed = false, l
 bool waitingRelease = false;
 
 // entropy mode fork (boot menu)
-enum EntMode { MODE_VN = 0, MODE_RAW = 1 };
+enum EntMode { MODE_VN = 0, MODE_RAW = 1, MODE_HYBRID = 2 };
 EntMode entropyMode = MODE_VN;
 bool modeSelect = true;
 int modeCursor = 0;
 // typed-input modes wait for full key release before processing any event
 bool inputAwaitRelease = false;
-constexpr char FW_VERSION[] = "0.2.1";
+constexpr char FW_VERSION[] = "0.3.0";
 #ifndef FW_GIT_SHA
 #define FW_GIT_SHA "unknown"
 #endif
 
 bool entropyReady() {
-  return entropyMode == MODE_VN ? vnBits >= 256 : rollCount >= 100;
+  switch (entropyMode) {
+    case MODE_VN:     return vnBits >= 256;
+    case MODE_RAW:
+    case MODE_HYBRID: return rollCount == 100;  // exactly 100, one canonical transcript
+  }
+  return false;
 }
 
 // per-key edge state for typed input (passphrase / quiz)
@@ -138,9 +143,15 @@ bool assessmentOK(String* why = nullptr) {
   computeStats();
   String w = "";
   if (!entropyReady()) {
-    w = entropyMode == MODE_VN ? "BLOCK: VN bits <256." : "BLOCK: need 100 rolls.";
+    w = entropyMode == MODE_VN ? "BLOCK: VN bits <256." : "BLOCK: need exactly 100 entries.";
     if (why) *why = w;
     return false;
+  }
+  if (entropyMode == MODE_HYBRID) {
+    // dice are an auxiliary hedge only: face stats are informational, never
+    // blocking. HWRNG is the primary source; its health check runs at build.
+    if (why) *why = "HYBRID: 100 entries + SAR RNG. Dice fairness NOT required.";
+    return true;
   }
   if (entropyMode == MODE_RAW) {
     uint8_t tmp[32];
@@ -200,17 +211,22 @@ void drawModeSelect() {
   drawnScreen = 0;
   fillRound(7, 29, 226, 66, 8, PANEL); M5Cardputer.Display.drawRoundRect(7, 29, 226, 66, 8, 0x3338);
   textAt(15, 37, "SELECT ENTROPY MODE", GOLD, PANEL);
-  textAt(15, 51, modeCursor == 0 ? "> 1) Von Neumann" : "  1) Von Neumann", modeCursor == 0 ? CYAN : TEXT, PANEL);
-  textAt(15, 63, modeCursor == 1 ? "> 2) Raw dice" : "  2) Raw dice", modeCursor == 1 ? CYAN : TEXT, PANEL);
+  textAt(15, 49, modeCursor == 0 ? "> 1) Von Neumann" : "  1) Von Neumann", modeCursor == 0 ? CYAN : TEXT, PANEL);
+  textAt(15, 60, modeCursor == 1 ? "> 2) Fair d6" : "  2) Fair d6", modeCursor == 1 ? CYAN : TEXT, PANEL);
+  textAt(15, 71, modeCursor == 2 ? "> 3) Hybrid" : "  3) Hybrid", modeCursor == 2 ? CYAN : TEXT, PANEL);
   fillRound(7, 76, 226, 49, 6, PANEL2); M5Cardputer.Display.drawRoundRect(7, 76, 226, 49, 6, 0x3338);
   if (modeCursor == 0) {
     textAt(15, 81, "Rolls read in pairs; equal", TEXT, PANEL2);
     textAt(15, 93, "pairs dropped. Removes dice", TEXT, PANEL2);
     textAt(15, 105, "bias. ~615 rolls needed.", TEXT, PANEL2);
+  } else if (modeCursor == 1) {
+    textAt(15, 81, "100 rolls, exact base-6.", ROSE, PANEL2);
+    textAt(15, 93, "Bias NOT corrected.", ROSE, PANEL2);
+    textAt(15, 105, "Fair d6 only. Not recommended.", ROSE, PANEL2);
   } else {
-    textAt(15, 81, "Every roll used directly.", ROSE, PANEL2);
-    textAt(15, 93, "Dice bias KEPT in entropy.", ROSE, PANEL2);
-    textAt(15, 105, "100 rolls. Not recommended.", ROSE, PANEL2);
+    textAt(15, 81, "100 dice/1-6 entries hashed,", TEXT, PANEL2);
+    textAt(15, 93, "plus ESP32-S3 physical RNG.", TEXT, PANEL2);
+    textAt(15, 105, "Dice bias harmless here.", MINT, PANEL2);
   }
   textAt(15, 118, ";=up .=down  Enter: select", MUTED, BG);
   String idLine = String(FW_VERSION) + " " + String(FW_GIT_SHA);
@@ -224,7 +240,9 @@ void drawMain() {
   computeStats();
   fillRound(7, 29, 118, 66, 8, PANEL); M5Cardputer.Display.drawRoundRect(7, 29, 118, 66, 8, 0x3338);
   textAt(15, 37, "rolls", MUTED, PANEL); textAt(15, 50, String(rollCount), entropyReady() ? GREEN : GOLD, PANEL, 2);
-  textAt(68, 50, entropyMode == MODE_VN ? "VN " + String(vnBits) + "/256" : "RAW " + String(rollCount) + "/100",
+  textAt(68, 50, entropyMode == MODE_VN ? "VN " + String(vnBits) + "/256"
+                        : (entropyMode == MODE_RAW ? "RAW " + String(rollCount) + "/100"
+                                                   : "HYB " + String(rollCount) + "/100"),
          entropyReady() ? GREEN : GOLD, PANEL);
   textAt(15, 75, "ties " + String(ties) + "  streak " + String(maxStreak), MUTED, PANEL);
   textAt(15, 86, sdOK ? "SD report enabled" : "SD not mounted", sdOK ? MINT : ROSE, PANEL);
@@ -341,20 +359,32 @@ void writeReport(bool ok, const String& why) {
   f.println("firmware_git_sha=" + String(FW_GIT_SHA));
   f.println("rolls=" + String(rollCount));
   if (entropyMode == MODE_VN) {
+    f.println("entropy_mode=von_neumann");
     f.println("vn_bits=" + String(vnBits));
     f.println("ties=" + String(ties));
     f.println("used_vn_bits=256");
     f.println("surplus_vn_bits=" + String(vnBits > 256 ? vnBits - 256 : 0));
-  } else {
+  } else if (entropyMode == MODE_RAW) {
+    f.println("entropy_mode=raw_dice");
     f.println("raw_dice_rolls=100");
     f.println("raw_dice_conversion=exact_uniform_rejection (X >= 5*2^256 rejected)");
     f.println("raw_dice_acceptance_probability=~88.6% (fair dice)");
     f.println("raw_dice_contract=FAIR INDEPENDENT D6 ONLY - bias not corrected");
+  } else {
+    f.println("entropy_mode=hybrid");
+    f.println("hybrid_dice_rolls=100");
+    f.println("hybrid_dice_conditioner=sha256");
+    f.println("hybrid_hwrng=esp32s3_sar_rng");
+    f.println("hybrid_hwrng_sample_bytes=512");
+    f.println("hybrid_combiner=xor");
+    f.println("hybrid_domain_version=1");
+    f.println("roll_transcript_saved=false");
+    f.println("hwrng_samples_saved=false");
+    f.println("source_digests_saved=false");
   }
   f.println("max_streak=" + String(maxStreak));
   f.println("faces=" + String(faceCount[0]) + "," + String(faceCount[1]) + "," + String(faceCount[2]) + "," + String(faceCount[3]) + "," + String(faceCount[4]) + "," + String(faceCount[5]));
   f.println("audit_fingerprint_sha256=" + String(entropyHex));
-  f.println(entropyMode == MODE_VN ? "entropy_mode=von_neumann" : "entropy_mode=raw_dice");
   // address is gated on backup verification: never written to SD before the quiz passes
   f.println(backupVerified ? ("address=" + String(address[0] ? address : "n/a")) : "address=n/a (backup not verified)");
   f.println(passLen1 > 0 ? "passphrase_set=yes" : "passphrase_set=no");
@@ -391,29 +421,58 @@ void buildWallet() {
   String why; bool ok = assessmentOK(&why);
   if (!ok) {
     hasHash = false;
-    statusLine = entropyMode == MODE_VN ? "need 256 VN bits" : "need 100 rolls";
+    statusLine = entropyMode == MODE_VN ? "need 256 VN bits" : "need exactly 100 entries";
     entropyHex[0] = 0; resultPage = PAGE_SANITY; lastAssessment = why;
     writeReport(false, why);
     drawResult();
     return;
   }
 
+  // one and only one bytes[32] handoff into BIP39, regardless of mode
   uint8_t bytes[32];
-  size_t bits = (entropyMode == MODE_VN)
-                    ? wc_vn_extract(rolls, rollCount, bytes)
-                    : wc_raw_extract(rolls, rollCount, bytes);
-  if (bits == WC_RAW_REJECTED) {
-    statusLine = "raw batch rejected: clear + re-roll";
-    hasHash = false;
-    wipeBytes(bytes, 32);
-    drawMain();
-    return;
-  }
-  if (bits < 256) {
-    statusLine = entropyMode == MODE_VN ? "need 256 VN bits" : "need 100 rolls";
-    hasHash = false;
-    drawMain();
-    return;
+  switch (entropyMode) {
+    case MODE_VN:
+      if (wc_vn_extract(rolls, rollCount, bytes) < 256) {
+        statusLine = "need 256 VN bits"; hasHash = false; drawMain(); return;
+      }
+      break;
+    case MODE_RAW:
+      if (wc_raw_extract(rolls, rollCount, bytes) != 256) {
+        statusLine = "raw batch rejected: clear + re-roll"; hasHash = false;
+        wipeBytes(bytes, 32); drawMain(); return;
+      }
+      break;
+    case MODE_HYBRID: {
+      uint8_t diceD[32] = {0}, hwD[32] = {0};
+      if (!wc_hybrid_dice_digest(rolls, rollCount, diceD)) {
+        statusLine = "hybrid: dice transcript invalid";
+        hasHash = false;
+        wipeBytes(diceD, 32);
+        drawMain();
+        return;
+      }
+      if (!verifyRadios()) {
+        radiosOffOK = false; hasHash = false;
+        statusLine = "RADIO STATE ERROR - blocked";
+        wipeBytes(diceD, 32);
+        drawMain();
+        return;
+      }
+      // HWRNG collected at the last possible moment, inside the radio-
+      // verified critical section. Catastrophic failure blocks generation.
+      if (!wc_platform_hwrng_digest(hwD)) {
+        hasHash = false;
+        statusLine = "HWRNG FAILURE - BLOCKED";
+        wipeBytes(hwD, 32);
+        wipeBytes(diceD, 32);
+        drawMain();
+        return;
+      }
+      wc_hybrid_combine(hwD, diceD, bytes);
+      wc_secure_zero(hwD, sizeof(hwD));
+      wc_secure_zero(diceD, sizeof(diceD));
+      break;
+    }
   }
   uint8_t hash[32];
   const char domain[] = "DiceWallet audit v1";
@@ -484,11 +543,13 @@ void handleModeSelect(const Keyboard_Class::KeysState& ks) {
     if (c == 'w' || c == 'a' || c == 'W' || c == 'A' || c == ';' || c == ',') prev = true;
     if (c == 's' || c == 'd' || c == 'S' || c == 'D' || c == '.' || c == '/') next = true;
   }
-  if (prev || next) { modeCursor = 1 - modeCursor; drawModeSelect(); return; }
+  if (prev || next) { modeCursor = (modeCursor + (next ? 1 : 2)) % 3; drawModeSelect(); return; }
   if (ks.enter) {
-    entropyMode = (modeCursor == 0) ? MODE_VN : MODE_RAW;
+    entropyMode = (EntMode)modeCursor;
     modeSelect = false;
-    statusLine = (entropyMode == MODE_VN) ? "mode: Von Neumann" : "mode: RAW dice - bias kept";
+    if (entropyMode == MODE_VN) statusLine = "mode: Von Neumann";
+    else if (entropyMode == MODE_RAW) statusLine = "mode: fair d6 - bias kept";
+    else statusLine = "mode: hybrid (HWRNG + dice)";
     drawMain();
     return;
   }
@@ -576,6 +637,9 @@ void handleQuiz(const Keyboard_Class::KeysState& ks) {
 
 void acceptRoll(char c) {
   if (c < '1' || c > '6') return;
+  if ((entropyMode == MODE_RAW || entropyMode == MODE_HYBRID) && rollCount >= 100) {
+    statusLine = "100 rolls complete"; drawMain(); return;
+  }
   if (rollCount >= MAX_ROLLS) { statusLine = "max roll buffer reached"; drawMain(); return; }
   rolls[rollCount++] = c;
   hasHash = false;

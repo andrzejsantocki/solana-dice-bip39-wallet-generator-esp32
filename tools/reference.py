@@ -158,5 +158,29 @@ results["vn"] = {"transcript": transcript, "entropy": ent.hex(),
                  "fingerprint": fp, "mnemonic": mn, "address": addr}
 print("VN OK:", len(transcript), "rolls ->", addr)
 
+# ---- hybrid mode: SHA256(dice transcript) XOR SHA256(fake HWRNG) -> wallet ----
+def hybrid_dice_digest(rolls: str) -> bytes:
+    dom = b"DiceWallet hybrid dice v1"
+    return sha256(dom + (100).to_bytes(2, "big") + rolls.encode())
+
+def hybrid_hw_digest() -> bytes:
+    dom = b"DiceWallet hybrid hwrng v1"
+    stream = bytes(range(256)) * 2  # 512 bytes 00 01 .. ff 00 01 .. ff
+    return sha256(dom + stream)
+
+ht = transcript[:100]
+hd = hybrid_dice_digest(ht)
+hw = hybrid_hw_digest()
+hent = bytes(a ^ b for a, b in zip(hw, hd))
+hfp = sha256(b"DiceWallet audit v1" + hent).hex()
+hmn = mnemonic_from_entropy(hent)
+hsd = seed_from_mnemonic(hmn, "")
+hkL = solana_keypair(hsd)
+haddr = base58(pub_pynacl(hkL))
+results["hybrid"] = {"transcript": ht, "dice_digest": hd.hex(),
+                     "hw_digest": hw.hex(), "entropy": hent.hex(),
+                     "fingerprint": hfp, "mnemonic": hmn, "address": haddr}
+print("HYBRID OK: 100 rolls ->", haddr)
+
 json.dump(results, open("tests/reference_vectors.json", "w"), indent=1)
 print("ALL REFERENCE VECTORS PASSED -> tests/reference_vectors.json")

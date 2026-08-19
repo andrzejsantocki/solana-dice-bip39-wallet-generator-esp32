@@ -50,6 +50,23 @@ void wc_key_edges(const uint8_t* word, size_t word_len, bool enter, bool del,
 // Constant-time equality (volatile reads, no early exit).
 bool wc_ct_equal(const void* a, const void* b, size_t n);
 
+// ---- hybrid mode (HWRNG primary, dice auxiliary) ----
+// Strict contract: rolls != NULL, out != NULL, roll_count == 100, every byte
+// '1'..'6'. Otherwise out is zeroed and false returned. Never skips invalid
+// characters. Digest = SHA256("DiceWallet hybrid dice v1" || u16be(100) ||
+// rolls). Domain + length separation keeps this hash non-interchangeable
+// with other SHA-256 uses in the firmware.
+bool wc_hybrid_dice_digest(const char* rolls, size_t roll_count, uint8_t out[32]);
+
+// ENT = H XOR D. No allocations, no arithmetic, no secret-dependent branches.
+void wc_hybrid_combine(const uint8_t hw[32], const uint8_t dice[32], uint8_t out[32]);
+
+// Platform hook: conditioned ESP32-S3 HWRNG digest.
+// Real device: SAR entropy source enabled, 16x32 bytes streamed through
+// SHA-256 (domain-separated), catastrophic-failure health check, fail-closed.
+// Host tests: deterministic fake stream.
+extern "C" bool wc_platform_hwrng_digest(uint8_t out[32]);
+
 // BIP39: 256-bit entropy -> 24-word mnemonic in out (WC_MNEMONIC_MAX_LEN).
 void wc_mnemonic_from_entropy(const uint8_t ent[32], char* out);
 

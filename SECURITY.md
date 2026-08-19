@@ -47,10 +47,22 @@ At boot the device offers two extraction modes:
   rejected (~11.4% of batches, UI says re-roll). X < L: entropy = X mod 2^256
   — exactly uniform for fair independent dice (5 preimages per output), and
   dice bias is NOT corrected by any part of this path. The UI marks raw mode
-  "Not recommended" and the sanity page flags it. The SD report records the
-  chosen mode (`entropy_mode=`) plus mode-specific fields (VN: `vn_bits`,
-  `ties`, `used_vn_bits`, `surplus_vn_bits`; raw: `raw_dice_rolls=100`,
-  conversion method, acceptance probability, fair-d6 contract).
+  "Not recommended" and the sanity page flags it.
+- Hybrid: ENT = SHA256("DiceWallet hybrid hwrng v1" || 512 HWRNG bytes) XOR
+  SHA256("DiceWallet hybrid dice v1" || u16be(100) || 100-entry transcript).
+  Domain separation keeps both digests non-interchangeable with other
+  SHA-256 uses. The HWRNG (ESP32-S3 SAR entropy source, enabled only inside
+  the critical section, disabled unconditionally after) is the primary
+  source; the dice transcript is an auxiliary hedge — it is never claimed to
+  be random, and 111111... or 161616... are legitimate inputs. A predictable
+  dice transcript cannot weaken an independent uniformly random hardware
+  value (XOR argument). A good unpredictable dice transcript can hedge an
+  undetected HWRNG failure. Detected catastrophic HWRNG failure (all 16
+  32-byte chunks identical) BLOCKS generation — no silent fallback to dice.
+  HWRNG is collected at the last possible moment (after passphrase confirm
+  and radio verification), never at boot or mode selection. The SD report
+  records metadata only (mode, rolls, conditioner, sample bytes, combiner,
+  domain version) — never transcripts, digests, or HWRNG samples.
 
 ## Radio posture
 

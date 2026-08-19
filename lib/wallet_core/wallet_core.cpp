@@ -154,6 +154,39 @@ bool wc_ct_equal(const void* a, const void* b, size_t n) {
   return diff == 0;
 }
 
+// ---------------- hybrid dice digest ----------------
+bool wc_hybrid_dice_digest(const char* rolls, size_t roll_count, uint8_t out[32]) {
+  if (!rolls || !out) {
+    if (out) wc_secure_zero(out, 32);
+    return false;
+  }
+  if (roll_count != 100) {
+    wc_secure_zero(out, 32);
+    return false;
+  }
+  for (size_t i = 0; i < roll_count; ++i) {
+    if (rolls[i] < '1' || rolls[i] > '6') {
+      wc_secure_zero(out, 32);
+      return false;
+    }
+  }
+  static const uint8_t domain[] = "DiceWallet hybrid dice v1";  // 25 bytes
+  const size_t DLEN = sizeof(domain) - 1;
+  uint8_t buf[DLEN + 2 + 100];
+  memcpy(buf, domain, DLEN);
+  buf[DLEN] = 0;
+  buf[DLEN + 1] = 100;  // u16be(100)
+  memcpy(buf + DLEN + 2, rolls, 100);
+  wc_sha256(buf, sizeof(buf), out);
+  wc_secure_zero(buf, sizeof(buf));
+  return true;
+}
+
+// ---------------- hybrid combiner ----------------
+void wc_hybrid_combine(const uint8_t hw[32], const uint8_t dice[32], uint8_t out[32]) {
+  for (size_t i = 0; i < 32; ++i) out[i] = (uint8_t)(hw[i] ^ dice[i]);
+}
+
 // ---------------- BIP39 ----------------
 void wc_mnemonic_from_entropy(const uint8_t ent[32], char* out) {
   uint8_t cs[32];

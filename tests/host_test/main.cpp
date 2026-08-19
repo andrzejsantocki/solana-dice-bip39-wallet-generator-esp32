@@ -290,6 +290,125 @@ int main() {
   }
   printf("wc_quiz_positions: checked\n");
 
+  // 11) wc_hybrid_dice_digest: exact KATs + strict input contract
+  {
+    uint8_t d[32];
+    char got[129];
+    const struct { const char* name; const char* rolls; const char* expect; } kats[] = {
+      {"ones",  "1111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+       "133c8135cc278518f788104fac03fe77fab95bdd66553b5530fd06df38d5a8fc"},
+      {"sixes", "6666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666",
+       "447d8804a067075c6b7394b386b1c947b347f4b85531323bdadc8bd61f4e129b"},
+      {"seq",   "1234561234561234561234561234561234561234561234561234561234561234561234561234561234561234561234561234",
+       "6b8a9b2fc2953c48ddfe4394136896c6f83a0afa6fd1958f22f62971993eecc3"},
+      {"alt",   "1616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616",
+       "7422dc0713a2cd6c4ec8d2e025af5d9a3a13d0bc0dcaf7f4f48346f916c51043"},
+    };
+    for (auto& k : kats) {
+      CHECK(wc_hybrid_dice_digest(k.rolls, strlen(k.rolls), d), "hybrid digest ok");
+      for (int j = 0; j < 32; ++j) sprintf(got + j * 2, "%02x", d[j]);
+      CHECK(strcmp(got, k.expect) == 0, "hybrid dice digest KAT");
+    }
+    // strict contract: wrong length, invalid chars, null pointers
+    char t101[101]; memset(t101, '1', 101);
+    CHECK(!wc_hybrid_dice_digest(t101, 101, d), "hybrid 101 rejected");
+    char t99[99]; memset(t99, '1', 99);
+    CHECK(!wc_hybrid_dice_digest(t99, 99, d), "hybrid 99 rejected");
+    CHECK(!wc_hybrid_dice_digest(kats[0].rolls, 0, d), "hybrid 0 rejected");
+    char bad0[100]; memset(bad0, '1', 100); bad0[50] = '0';
+    CHECK(!wc_hybrid_dice_digest(bad0, 100, d), "hybrid '0' rejected");
+    char bad7[100]; memset(bad7, '1', 100); bad7[50] = '7';
+    CHECK(!wc_hybrid_dice_digest(bad7, 100, d), "hybrid '7' rejected");
+    char badNul[100]; memset(badNul, '1', 100); badNul[50] = 0;
+    CHECK(!wc_hybrid_dice_digest(badNul, 100, d), "hybrid NUL rejected");
+    char badX[100]; memset(badX, '1', 100); badX[50] = 'x';
+    CHECK(!wc_hybrid_dice_digest(badX, 100, d), "hybrid 'x' rejected");
+    uint8_t probe[32]; memset(probe, 0xCC, sizeof(probe));
+    CHECK(!wc_hybrid_dice_digest(NULL, 100, probe), "hybrid NULL rolls rejected");
+    bool zeroed = true;
+    for (int j = 0; j < 32; ++j) if (probe[j] != 0) zeroed = false;
+    CHECK(zeroed, "hybrid NULL input zeroes out");
+    CHECK(!wc_hybrid_dice_digest(kats[0].rolls, 100, NULL), "hybrid NULL out rejected");
+  }
+  printf("wc_hybrid_dice_digest: KATs + strict contract checked\n");
+
+  // 12) wc_hybrid_combine: trivial vectors
+  {
+    uint8_t z[32] = {0}, f[32], o[32];
+    memset(f, 0xFF, sizeof(f));
+    memset(o, 0, sizeof(o));
+    wc_hybrid_combine(z, z, o);
+    bool allz = true; for (int j = 0; j < 32; ++j) if (o[j]) allz = false;
+    CHECK(allz, "combine 0^0 = 0");
+    wc_hybrid_combine(f, z, o);
+    bool allf = true; for (int j = 0; j < 32; ++j) if (o[j] != 0xFF) allf = false;
+    CHECK(allf, "combine F^0 = F");
+    wc_hybrid_combine(f, f, o);
+    allz = true; for (int j = 0; j < 32; ++j) if (o[j]) allz = false;
+    CHECK(allz, "combine F^F = 0");
+    uint8_t a[32], b[32], c[32];
+    for (int j = 0; j < 32; ++j) { a[j] = (uint8_t)j; b[j] = (uint8_t)(0x55 + j); }
+    wc_hybrid_combine(a, b, c);
+    bool ok = true; for (int j = 0; j < 32; ++j) if (c[j] != (uint8_t)(a[j] ^ b[j])) ok = false;
+    CHECK(ok, "combine known vector");
+  }
+  printf("wc_hybrid_combine: checked\n");
+
+  // 13) full hybrid KAT: fake HWRNG + transcript -> entropy -> mnemonic -> address
+  {
+    const HybridVector* v = &HYBRID_VECTOR;
+    char got[129];
+    uint8_t dice[32], hw[32], ent[32];
+    CHECK(wc_hybrid_dice_digest(v->transcript, strlen(v->transcript), dice), "hybrid dice digest");
+    for (int j = 0; j < 32; ++j) sprintf(got + j * 2, "%02x", dice[j]);
+    CHECK(strcmp(got, v->dice_digest) == 0, "hybrid dice digest vector");
+    CHECK(wc_platform_hwrng_digest(hw), "hybrid hw digest ok");
+    for (int j = 0; j < 32; ++j) sprintf(got + j * 2, "%02x", hw[j]);
+    CHECK(strcmp(got, v->hw_digest) == 0, "hybrid hw digest vector");
+    wc_hybrid_combine(hw, dice, ent);
+    for (int j = 0; j < 32; ++j) sprintf(got + j * 2, "%02x", ent[j]);
+    CHECK(strcmp(got, v->entropy) == 0, "hybrid entropy vector");
+    char mn[WC_MNEMONIC_MAX_LEN];
+    wc_mnemonic_from_entropy(ent, mn);
+    CHECK(strcmp(mn, v->mnemonic) == 0, "hybrid mnemonic vector");
+    uint8_t seed[64];
+    wc_seed_from_mnemonic(mn, "", seed);
+    char addr[45];
+    wc_solana_address(seed, addr);
+    CHECK(strcmp(addr, v->address) == 0, "hybrid address vector");
+    // fault injection: one hw byte flips -> entropy changes
+    uint8_t ent2[32];
+    hw[0] ^= 1;
+    wc_hybrid_combine(hw, dice, ent2);
+    bool differs = false;
+    for (int j = 0; j < 32; ++j) if (ent2[j] != ent[j]) differs = true;
+    CHECK(differs, "fault D: one hwrng byte change -> entropy changes");
+    // fault injection: one dice char changes -> dice digest changes
+    char t2[100];
+    memcpy(t2, v->transcript, 100);
+    t2[47] = (t2[47] == '4') ? '3' : '4';
+    uint8_t d2[32];
+    CHECK(wc_hybrid_dice_digest(t2, 100, d2), "fault E: digest ok");
+    differs = false;
+    for (int j = 0; j < 32; ++j) if (d2[j] != dice[j]) differs = true;
+    CHECK(differs, "fault E: roll[47] change -> dice digest changes");
+    // fault B/C: degenerate dice transcripts still yield valid distinct entropy
+    char ones[100]; memset(ones, '1', 100);
+    char alts[100]; memset(alts, '1', 100);
+    for (int j = 1; j < 100; j += 2) alts[j] = '6';
+    uint8_t d1[32], da[32], e1[32], ea[32];
+    uint8_t hw2[32];
+    CHECK(wc_platform_hwrng_digest(hw2), "fault B hw");
+    CHECK(wc_hybrid_dice_digest(ones, 100, d1), "fault B digest");
+    wc_hybrid_combine(hw2, d1, e1);
+    CHECK(wc_hybrid_dice_digest(alts, 100, da), "fault C digest");
+    wc_hybrid_combine(hw2, da, ea);
+    differs = false;
+    for (int j = 0; j < 32; ++j) if (e1[j] != ea[j]) differs = true;
+    CHECK(differs, "fault B vs C: 111... vs 1616... differ");
+  }
+  printf("hybrid KAT: fake HWRNG + transcript -> wallet checked\n");
+
   if (failures) {
     printf("\n%d FAILURES\n", failures);
     return 1;
