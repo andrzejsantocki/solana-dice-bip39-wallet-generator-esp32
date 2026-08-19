@@ -150,7 +150,7 @@ bool assessmentOK(String* why = nullptr) {
   if (entropyMode == MODE_HYBRID) {
     // dice are an auxiliary hedge only: face stats are informational, never
     // blocking. HWRNG is the primary source; its health check runs at build.
-    if (why) *why = "HYBRID: 100 entries + SAR RNG. Dice fairness NOT required.";
+    if (why) *why = "DICE + HWRNG: 100 entries + SAR RNG. Dice fairness NOT required.";
     return true;
   }
   if (entropyMode == MODE_RAW) {
@@ -213,7 +213,7 @@ void drawModeSelect() {
   textAt(15, 37, "SELECT ENTROPY MODE", GOLD, PANEL);
   textAt(15, 49, modeCursor == 0 ? "> 1) Von Neumann" : "  1) Von Neumann", modeCursor == 0 ? CYAN : TEXT, PANEL);
   textAt(15, 60, modeCursor == 1 ? "> 2) Fair d6" : "  2) Fair d6", modeCursor == 1 ? CYAN : TEXT, PANEL);
-  textAt(15, 71, modeCursor == 2 ? "> 3) Hybrid" : "  3) Hybrid", modeCursor == 2 ? CYAN : TEXT, PANEL);
+  textAt(15, 71, modeCursor == 2 ? "> 3) Dice + HWRNG" : "  3) Dice + HWRNG", modeCursor == 2 ? CYAN : TEXT, PANEL);
   fillRound(7, 76, 226, 49, 6, PANEL2); M5Cardputer.Display.drawRoundRect(7, 76, 226, 49, 6, 0x3338);
   if (modeCursor == 0) {
     textAt(15, 81, "Rolls read in pairs; equal", TEXT, PANEL2);
@@ -242,7 +242,7 @@ void drawMain() {
   textAt(15, 37, "rolls", MUTED, PANEL); textAt(15, 50, String(rollCount), entropyReady() ? GREEN : GOLD, PANEL, 2);
   textAt(68, 50, entropyMode == MODE_VN ? "VN " + String(vnBits) + "/256"
                         : (entropyMode == MODE_RAW ? "RAW " + String(rollCount) + "/100"
-                                                   : "HYB " + String(rollCount) + "/100"),
+                                                   : "D+H " + String(rollCount) + "/100"),
          entropyReady() ? GREEN : GOLD, PANEL);
   textAt(15, 75, "ties " + String(ties) + "  streak " + String(maxStreak), MUTED, PANEL);
   textAt(15, 86, sdOK ? "SD report enabled" : "SD not mounted", sdOK ? MINT : ROSE, PANEL);
@@ -445,7 +445,7 @@ void buildWallet() {
     case MODE_HYBRID: {
       uint8_t diceD[32] = {0}, hwD[32] = {0};
       if (!wc_hybrid_dice_digest(rolls, rollCount, diceD)) {
-        statusLine = "hybrid: dice transcript invalid";
+        statusLine = "dice transcript invalid";
         hasHash = false;
         wipeBytes(diceD, 32);
         drawMain();
@@ -549,7 +549,7 @@ void handleModeSelect(const Keyboard_Class::KeysState& ks) {
     modeSelect = false;
     if (entropyMode == MODE_VN) statusLine = "mode: Von Neumann";
     else if (entropyMode == MODE_RAW) statusLine = "mode: fair d6 - bias kept";
-    else statusLine = "mode: hybrid (HWRNG + dice)";
+    else statusLine = "mode: Dice + HWRNG (100 entries + SAR RNG)";
     drawMain();
     return;
   }

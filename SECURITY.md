@@ -48,8 +48,9 @@ At boot the device offers two extraction modes:
   — exactly uniform for fair independent dice (5 preimages per output), and
   dice bias is NOT corrected by any part of this path. The UI marks raw mode
   "Not recommended" and the sanity page flags it.
-- Hybrid: ENT = SHA256("DiceWallet hybrid hwrng v1" || 512 HWRNG bytes) XOR
-  SHA256("DiceWallet hybrid dice v1" || u16be(100) || 100-entry transcript).
+- Dice + HWRNG: ENT = SHA256("DiceWallet hybrid hwrng v1" || 512 HWRNG
+  bytes) XOR SHA256("DiceWallet hybrid dice v1" || u16be(100) || 100-entry
+  transcript).
   Domain separation keeps both digests non-interchangeable with other
   SHA-256 uses. The HWRNG (ESP32-S3 SAR entropy source, enabled only inside
   the critical section, disabled unconditionally after) is the primary

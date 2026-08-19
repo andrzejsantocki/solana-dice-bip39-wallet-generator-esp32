@@ -17,7 +17,7 @@ Dice-entropy BIP39 wallet generator: physical d6 rolls → Von Neumann extractio
   - first < second: bit 0
   - first > second: bit 1
 - raw dice mode: 100 rolls -> X in [0, 6^100); if X >= 5·2^256 the batch is rejected (re-roll), else entropy = X mod 2^256 — exactly uniform for fair dice, ~88.6% acceptance; physical dice bias is NOT corrected — the UI warns before selection
-- hybrid mode: 100 arbitrary 1-6 entries hashed (SHA256, domain-separated) XOR conditioned ESP32-S3 HWRNG (512 bytes streamed through SHA256) — HWRNG is the primary entropy source, dice are an auxiliary hedge; predictable dice cannot weaken a good HWRNG
+- Dice + HWRNG mode: 100 arbitrary 1-6 entries hashed (SHA256, domain-separated) XOR conditioned ESP32-S3 HWRNG (512 bytes streamed through SHA256) — HWRNG is the primary entropy source, dice are an auxiliary hedge; predictable dice cannot weaken a good HWRNG
 - hard gate: at least 256 accepted VN bits (Von Neumann mode) or exactly 100 entries (raw/hybrid modes)
 - no minimum fixed roll-count gate; the session buffer caps at 1024 rolls (fair dice never get near it; heavily biased dice in VN mode may hit it — clear and re-roll if so)
 - SHA-256 audit fingerprint display, split into large readable numbered lines
@@ -57,7 +57,7 @@ otherwise the entropy is X mod 2^256. For fair independent dice this is an
 exactly uniform 256-bit output; dice bias is NOT corrected — the UI marks
 raw mode "Not recommended".
 
-Hybrid mode does not assume that the entered 1-6 sequence is random. The
+Dice + HWRNG mode does not assume that the entered 1-6 sequence is random. The
 complete 100-entry transcript is hashed as an auxiliary contribution. Wallet
 security primarily relies on the ESP32-S3 hardware RNG operating with its
 documented SAR-ADC physical entropy source enabled. The conditioned hardware
@@ -65,8 +65,8 @@ value and conditioned dice transcript are combined by XOR. A predictable or
 deliberately chosen dice transcript does not reduce the entropy of an
 independent uniformly random hardware contribution. If genuine independent
 physical dice are used, they provide an additional independent source of
-uncertainty. Hybrid mode does not attempt to estimate or certify the amount
-of entropy supplied by the dice.
+uncertainty. Dice + HWRNG mode does not attempt to estimate or certify the
+amount of entropy supplied by the dice.
 
 The displayed SHA-256 value is an audit fingerprint only:
 
