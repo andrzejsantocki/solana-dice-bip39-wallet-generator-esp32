@@ -68,6 +68,9 @@ int modeCursor = 0;
 // typed-input modes wait for full key release before processing any event
 bool inputAwaitRelease = false;
 constexpr char FW_VERSION[] = "0.2.0";
+#ifndef FW_GIT_SHA
+#define FW_GIT_SHA "unknown"
+#endif
 
 bool entropyReady() {
   return entropyMode == MODE_VN ? vnBits >= 256 : rollCount >= 100;
@@ -200,7 +203,8 @@ void drawModeSelect() {
     textAt(15, 105, "100 rolls. Not recommended.", ROSE, PANEL2);
   }
   textAt(15, 118, ";=up .=down  Enter: select", MUTED, BG);
-  textAt(8, 126, FW_VERSION, MUTED, BG);
+  String idLine = String(FW_VERSION) + " " + String(FW_GIT_SHA);
+  textAt(8, 126, idLine, MUTED, BG);
 }
 
 void drawMain() {
@@ -324,6 +328,7 @@ void writeReport(bool ok, const String& why) {
   f.println(ok ? "SANITY_OK" : "SANITY_BLOCK");
   f.println(why);
   f.println("firmware_version=" + String(FW_VERSION));
+  f.println("firmware_git_sha=" + String(FW_GIT_SHA));
   f.println("rolls=" + String(rollCount));
   if (entropyMode == MODE_VN) {
     f.println("vn_bits=" + String(vnBits));
