@@ -3,6 +3,8 @@ BIP39: official trezor vectors.json (english, 256-bit ENT, implicit passphrase "
 SLIP-0010: official spec vectors; Solana: pynacl <-> cryptography cross-check.
 Outputs tests/reference_vectors.json consumed by the host C++ test harness.
 """
+import os
+os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root
 import hashlib, hmac, json, unicodedata
 import nacl.signing
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey

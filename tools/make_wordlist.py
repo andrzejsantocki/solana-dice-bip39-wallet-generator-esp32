@@ -1,4 +1,5 @@
-import hashlib
+import hashlib, os
+os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root
 
 # Build PROGMEM wordlist header from english.txt
 with open("lib/bip39/english.txt") as f:

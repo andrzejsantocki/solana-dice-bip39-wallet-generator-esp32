@@ -10,3 +10,5 @@ src/.hermes-tmp*/
 *.map
 *.log
 tests/host_test/host_test.exe
+start_hermes_localprofile.py
+__pycache__/

@@ -97,10 +97,11 @@ Host-side verification (`tests/`) compiles the exact on-device `lib/wallet_core`
 - contracts: wc_nfkd never truncates (overflow → false), base58 bounds rejection
 
 ```bash
-python reference.py                 # regenerate tests/reference_vectors.json (dev machines with pynacl + cryptography)
-python gen_test_vectors.py          # regenerate tests/host_test/vectors.inc
-bash tests/build_host_test.sh       # portable: w64devkit (Windows) or system gcc/g++ (CI)
-./tests/host_test/host_test         # .exe suffix on Windows
+python tools/reference.py             # regenerate tests/reference_vectors.json (dev machines with pynacl + cryptography)
+python tools/gen_test_vectors.py      # regenerate tests/host_test/vectors.inc
+python tools/make_wordlist.py         # regenerate lib/bip39/wordlist.h from english.txt
+bash tests/build_host_test.sh         # portable: w64devkit (Windows) or system gcc/g++ (CI)
+./tests/host_test/host_test           # .exe suffix on Windows
 ```
 
 CI runs the host tests on every push/PR — with AddressSanitizer + UndefinedBehaviorSanitizer enabled — and publishes tag releases only after both host tests and the firmware build pass.
@@ -122,13 +123,15 @@ Output:
 Release binary name:
 
 ```text
-DiceWallet-cardputer-adv.bin
+releases/DiceWallet-cardputer-adv.bin
 ```
+
+(committed convenience build for launcher install; GitHub release assets are the authoritative CI-built ones)
 
 ## Run via Launcher
 
 1. Install M5Launcher/Cardputer ADV Launcher on device.
-2. Copy `DiceWallet-cardputer-adv.bin` to FAT32 SD card or upload via Launcher WebUI.
+2. Copy `releases/DiceWallet-cardputer-adv.bin` to FAT32 SD card or upload via Launcher WebUI.
 3. Launcher → SD/WUI → select binary → install.
 4. Reboot.
 

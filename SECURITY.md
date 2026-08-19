@@ -74,8 +74,8 @@ At boot the device offers two extraction modes:
 Run:
 
 ```bash
-python reference.py          # regenerates tests/reference_vectors.json
-python gen_test_vectors.py   # regenerates tests/host_test/vectors.inc
+python tools/reference.py        # regenerates tests/reference_vectors.json
+python tools/gen_test_vectors.py # regenerates tests/host_test/vectors.inc
 bash tests/build_host_test.sh && ./tests/host_test/host_test
 ```
 

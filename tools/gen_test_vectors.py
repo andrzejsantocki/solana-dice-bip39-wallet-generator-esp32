@@ -1,5 +1,6 @@
 """Generate tests/host_test/vectors.inc from tests/reference_vectors.json."""
-import json
+import json, os
+os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root
 
 v = json.load(open("tests/reference_vectors.json"))
 out = []
