@@ -258,7 +258,7 @@ void drawResult() {
   drawnScreen = 4;
   computeStats(); String why; bool ok = assessmentOK(&why);
   fillRound(8, 28, 224, 98, 10, PANEL); M5Cardputer.Display.drawRoundRect(8, 28, 224, 98, 10, ok ? GREEN : RED);
-  textAt(18, 36, "page " + String(resultPage + 1) + "/" + String(PAGE_COUNT) + "  ;=up .=down", MUTED, PANEL);
+  textAt(18, 36, "page " + String(resultPage + 1) + "/" + String(PAGE_COUNT) + "  ;=up .=down  esc=back", MUTED, PANEL);
   if (resultPage == PAGE_FINGERPRINT) {
     textAt(18, 48, "1) SHA256 FINGERPRINT", GREEN, PANEL);
     M5Cardputer.Display.setTextSize(2); M5Cardputer.Display.setTextColor(CYAN, PANEL);
@@ -627,7 +627,7 @@ void loop() {
   if (waitingRelease) return;
   waitingRelease = true;
 
-  bool yes = false, no = false, prev = false, next = false;
+  bool yes = false, no = false, prev = false, next = false, esc = false;
   int diceCount = 0; char dice = 0;
   for (auto h : ks.hid_keys) {
     if (h == HID_UP || h == HID_LEFT) prev = true;
@@ -640,6 +640,7 @@ void loop() {
     // arrow glyphs and arrive as word chars, never as HID arrow codes
     if (c == 'w' || c == 'a' || c == 'W' || c == 'A' || c == ';' || c == ',') prev = true;
     if (c == 's' || c == 'd' || c == 'S' || c == 'D' || c == '.' || c == '/') next = true;
+    if (c == '`') esc = true;  // Esc key on Cardputer
     if (c >= '1' && c <= '6') { dice = c; diceCount++; }
   }
 
@@ -651,6 +652,8 @@ void loop() {
   }
 
   if (showingResult && diceCount == 1 && !prev && !next) { acceptRoll(dice); return; }
+
+  if (showingResult && esc) { statusLine = "back to rolls"; drawMain(); return; }
 
   uint32_t now = millis();
   if (showingResult && (prev || next) && now - lastNavMs > 180) {
