@@ -61,7 +61,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" \
-            DiceWallet-cardputer-adv.bin DiceWallet-cardputer-adv.bin.sha256 \
+          # no checkout step in this job: tell gh the repo explicitly
+          BIN=$(find . -name "DiceWallet-cardputer-adv.bin" | head -1)
+          SHA=$(find . -name "DiceWallet-cardputer-adv.bin.sha256" | head -1)
+          test -n "$BIN" && test -n "$SHA"
+          gh release create -R "$GITHUB_REPOSITORY" "$GITHUB_REF_NAME" \
+            "$BIN" "$SHA" \
             --title "$GITHUB_REF_NAME" \
             --notes "CI-built Cardputer ADV firmware. Built by GitHub Actions from tag $GITHUB_REF_NAME after host crypto/vector tests and firmware build both passed."
