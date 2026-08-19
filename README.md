@@ -139,6 +139,49 @@ Caveats:
   prove the source is safe — that's what the audit/SECURITY review is
   for.
 
+## Self-hosted verification (no GitHub trust)
+
+Full local verification without relying on CI at all: audit the source,
+run the tests, build the firmware, and check the binary yourself.
+
+Needs: git, Python 3.9+ (`pip install pynacl cryptography` for vector
+regeneration), PlatformIO Core, and (Windows) the w64devkit toolchain
+for host tests — see `tests/build_host_test.sh`.
+
+```bash
+# 1. get the exact release source (or the sha shown by a flashed device)
+git clone https://github.com/andrzejsantocki/solana-dice-bip39-wallet-generator-esp32.git
+cd solana-dice-bip39-wallet-generator-esp32
+git checkout v0.2.0                  # tag = released source
+
+# 2. audit the source (SECURITY.md summarizes the threat model)
+
+# 3. crypto + input-helper tests, with sanitizers
+SANFLAGS="-fsanitize=address,undefined" bash tests/build_host_test.sh
+./tests/host_test/host_test          # ALL HOST TESTS PASSED
+
+# 4. optionally regenerate the reference vectors from official sources
+python tools/reference.py            # needs pynacl + cryptography
+python tools/gen_test_vectors.py     # then rerun step 3
+
+# 5. build the firmware (clean, deterministic)
+python -m platformio run -t clean
+python -m platformio run
+
+# 6. compare against the published artifact
+sha256sum .pio/build/cardputer_adv_launcher/firmware.bin
+# expect: releases/DiceWallet-cardputer-adv.bin.sha256 (repo) or the
+# .sha256 asset attached to the GitHub release v0.2.0
+
+# 7. flash your OWN build and verify identity on-device:
+#    boot menu bottom line shows: 0.2.0 <git-sha>  ==  the tag commit
+```
+
+If the hash matches and the boot screen shows the tag commit, the
+device runs exactly the code you audited — no trust in anyone's build
+machine. The SD report also logs `firmware_git_sha=` for post-hoc
+checks.
+
 ## Build
 
 ```bash
