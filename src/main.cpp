@@ -192,7 +192,7 @@ void drawModeSelect() {
     textAt(15, 93, "Dice bias KEPT in entropy.", ROSE, PANEL2);
     textAt(15, 105, "100 rolls. Not recommended.", ROSE, PANEL2);
   }
-  textAt(15, 118, "Up/Down: choose  Enter: select", MUTED, BG);
+  textAt(15, 118, ";=up .=down  Enter: select", MUTED, BG);
   textAt(8, 126, FW_VERSION, MUTED, BG);
 }
 
@@ -443,8 +443,8 @@ void handleModeSelect(const Keyboard_Class::KeysState& ks) {
     if (h == HID_DOWN || h == HID_RIGHT) next = true;
   }
   for (auto c : ks.word) {
-    if (c == 'w' || c == 'a' || c == 'W' || c == 'A') prev = true;
-    if (c == 's' || c == 'd' || c == 'S' || c == 'D') next = true;
+    if (c == 'w' || c == 'a' || c == 'W' || c == 'A' || c == ';' || c == ',') prev = true;
+    if (c == 's' || c == 'd' || c == 'S' || c == 'D' || c == '.' || c == '/') next = true;
   }
   if (prev || next) { modeCursor = 1 - modeCursor; drawModeSelect(); return; }
   if (ks.enter) {
@@ -622,8 +622,10 @@ void loop() {
   for (auto c : ks.word) {
     if (c == 'y' || c == 'Y') yes = true;
     if (c == 'n' || c == 'N') no = true;
-    if (c == 'w' || c == 'a' || c == 'W' || c == 'A') prev = true;
-    if (c == 's' || c == 'd' || c == 'S' || c == 'D') next = true;
+    // Cardputer has no dedicated arrow keys: ';' '.' ',' '/' carry the
+    // arrow glyphs and arrive as word chars, never as HID arrow codes
+    if (c == 'w' || c == 'a' || c == 'W' || c == 'A' || c == ';' || c == ',') prev = true;
+    if (c == 's' || c == 'd' || c == 'S' || c == 'D' || c == '.' || c == '/') next = true;
     if (c >= '1' && c <= '6') { dice = c; diceCount++; }
   }
 
