@@ -19,35 +19,34 @@
 #define PAGE_FINGERPRINT 0
 #define PAGE_MNEMONIC_FIRST 1
 #define PAGE_MNEMONIC_COUNT 4   // 6 words per page
-#define PAGE_PASSPHRASE 5
-#define PAGE_ADDRESS 6
-#define PAGE_SANITY 7
-#define PAGE_SD 8
-#define PAGE_COUNT 9
+#define PAGE_ADDRESS 5
+#define PAGE_SANITY 6
+#define PAGE_SD 7
+#define PAGE_COUNT 8
 
 namespace {
-constexpr uint16_t BG = 0x08AC, PANEL = 0x118F, PANEL2 = 0x19F3;
-constexpr uint16_t CYAN = 0x07FF, MINT = 0x57F6, GOLD = 0xFEA0, ROSE = 0xF9B6;
-constexpr uint16_t TEXT = 0xFFFF, MUTED = 0x9CF3, GREEN = 0x4FEA, RED = 0xF986;
+// Light "web3" palette: quiet neutral surfaces, ink-dark copy and saturated
+// violet/cyan accents.  Keeping the background bright also improves legibility
+// on the Cardputer's small display in daylight.
+constexpr uint16_t BG = 0xF7BE, PANEL = 0xFFFF, PANEL2 = 0xEF9F;
+constexpr uint16_t CYAN = 0x067F, MINT = 0x05F3, GOLD = 0x8A5F, ROSE = 0xE91F;
+constexpr uint16_t TEXT = 0x2128, MUTED = 0x7BCF, GREEN = 0x05A9, RED = 0xD8E4;
+constexpr uint16_t VIOLET = 0x723F, BORDER = 0xD69F;
 constexpr size_t MAX_ROLLS = 1024;
 
 // ---------------- secret / sensitive state (fixed buffers only) ----------------
 char rolls[MAX_ROLLS];
 size_t rollCount = 0;
 char entropyHex[65];                     // audit fingerprint (public)
-char passphrase[WC_PASSPHRASE_MAX_LEN] = {0};
-char passphraseConfirm[WC_PASSPHRASE_MAX_LEN] = {0};
-char passphraseNfkd[WC_PASSPHRASE_MAX_LEN] = {0};
 char mnemonic[WC_MNEMONIC_MAX_LEN] = {0};
 char address[WC_ADDRESS_MAX_LEN] = {0};
 char quizBuf[12] = {0};
 char tailBuf[25] = {0};
 uint16_t wordOff[24] = {0};
 uint8_t wordLen[24] = {0};
-size_t passLen = 0, passLen1 = 0, quizLen = 0;
+size_t quizLen = 0;
 uint8_t quizPos[4] = {0};
 uint8_t quizStep = 0;
-bool passInput = false, passConfirmPhase = false;
 bool quizActive = false, backupVerified = false;
 
 // ---------------- UI / non-secret state ----------------
@@ -65,11 +64,11 @@ enum EntMode { MODE_VN = 0, MODE_RAW = 1, MODE_HYBRID = 2 };
 EntMode entropyMode = MODE_VN;
 bool modeSelect = true;
 int modeCursor = 0;
-// typed-input modes wait for full key release before processing any event
+// Quiz input waits for full key release before processing any event.
 bool inputAwaitRelease = false;
 // 10 visible 1-6 values derived from the first HWRNG block (report display)
 char hwSample[24];
-constexpr char FW_VERSION[] = "0.3.0";
+constexpr char FW_VERSION[] = "0.4.0";
 #ifndef FW_GIT_SHA
 #define FW_GIT_SHA "unknown"
 #endif
@@ -83,7 +82,7 @@ bool entropyReady() {
   return false;
 }
 
-// per-key edge state for typed input (passphrase / quiz)
+// Per-key edge state for typed quiz input.
 uint32_t typeMask[WC_ASCII_BUCKETS] = {0, 0, 0, 0};
 bool prevEnterK = false, prevDelK = false;
 
@@ -186,12 +185,34 @@ bool verifyRadios() {
 void drawHeader(bool full = true) {
   if (full) {
     M5Cardputer.Display.fillRect(0, 0, 240, 135, BG);
-    for (int i = 0; i < 240; i += 8) M5Cardputer.Display.drawFastVLine(i, 0, 135, (i % 24 == 0) ? 0x0AEE : 0x09AD);
   }
-  fillRound(4, 3, 232, 20, 6, PANEL2);
-  M5Cardputer.Display.drawRoundRect(4, 3, 232, 20, 6, CYAN);
-  textAt(12, 8, radiosOffOK ? "DICE ENTROPY // RADIOS OFF" : "RADIO STATE ERROR", radiosOffOK ? CYAN : RED, PANEL2);
-  fillRound(210, 7, 18, 12, 3, showingResult ? GREEN : (sdOK ? MINT : GOLD));
+  // A 16 px status rail replaces the old 20 px framed banner.  It keeps the
+  // safety state persistent without spending nearly a fifth of screen height.
+  M5Cardputer.Display.fillRect(0, 0, 240, 16, PANEL);
+  M5Cardputer.Display.drawFastHLine(0, 15, 240, BORDER);
+  fillRound(6, 4, 8, 8, 4, radiosOffOK ? GREEN : RED);
+  textAt(19, 4, radiosOffOK ? "DICE WALLET  /  OFFLINE" : "RADIO STATE ERROR", radiosOffOK ? TEXT : RED, PANEL);
+
+  // Native M5Unified battery reading, kept inside the existing 16 px rail.
+  // getBatteryLevel() returns a percentage, or a negative value when the
+  // board cannot provide a reading.
+  int battery = M5.Power.getBatteryLevel();
+  char batteryText[5];
+  if (battery < 0) {
+    snprintf(batteryText, sizeof(batteryText), "--%%");
+  } else {
+    if (battery > 100) battery = 100;
+    snprintf(batteryText, sizeof(batteryText), "%d%%", battery);
+  }
+  uint16_t batteryColor = battery >= 0 && battery <= 15 ? RED : GREEN;
+  textAt(177, 4, batteryText, battery < 0 ? MUTED : TEXT, PANEL);
+  M5Cardputer.Display.drawRoundRect(207, 3, 25, 10, 2, battery < 0 ? MUTED : TEXT);
+  M5Cardputer.Display.fillRect(232, 6, 2, 4, battery < 0 ? MUTED : TEXT);
+  M5Cardputer.Display.fillRect(210, 6, 19, 4, PANEL);
+  if (battery >= 0) {
+    int fill = (19 * battery + 99) / 100;
+    if (fill) M5Cardputer.Display.fillRect(210, 6, fill, 4, batteryColor);
+  }
 }
 
 // screen id for incremental redraw: full clear only when the screen changes,
@@ -211,12 +232,12 @@ void drawBars() {
 void drawModeSelect() {
   drawHeader(drawnScreen != 0);
   drawnScreen = 0;
-  fillRound(7, 29, 226, 66, 8, PANEL); M5Cardputer.Display.drawRoundRect(7, 29, 226, 66, 8, 0x3338);
-  textAt(15, 37, "SELECT ENTROPY MODE", GOLD, PANEL);
-  textAt(15, 49, modeCursor == 0 ? "> 1) Von Neumann" : "  1) Von Neumann", modeCursor == 0 ? CYAN : TEXT, PANEL);
-  textAt(15, 60, modeCursor == 1 ? "> 2) Fair d6" : "  2) Fair d6", modeCursor == 1 ? CYAN : TEXT, PANEL);
-  textAt(15, 71, modeCursor == 2 ? "> 3) Dice + HWRNG" : "  3) Dice + HWRNG", modeCursor == 2 ? CYAN : TEXT, PANEL);
-  fillRound(7, 76, 226, 49, 6, PANEL2); M5Cardputer.Display.drawRoundRect(7, 76, 226, 49, 6, 0x3338);
+  fillRound(7, 21, 226, 52, 7, PANEL); M5Cardputer.Display.drawRoundRect(7, 21, 226, 52, 7, BORDER);
+  textAt(15, 27, "SELECT ENTROPY MODE", VIOLET, PANEL);
+  textAt(15, 39, modeCursor == 0 ? "> 1) Von Neumann" : "  1) Von Neumann", modeCursor == 0 ? VIOLET : TEXT, PANEL);
+  textAt(15, 50, modeCursor == 1 ? "> 2) Fair d6" : "  2) Fair d6", modeCursor == 1 ? VIOLET : TEXT, PANEL);
+  textAt(15, 61, modeCursor == 2 ? "> 3) Dice + HWRNG" : "  3) Dice + HWRNG", modeCursor == 2 ? VIOLET : TEXT, PANEL);
+  fillRound(7, 76, 226, 43, 6, PANEL2); M5Cardputer.Display.drawRoundRect(7, 76, 226, 43, 6, BORDER);
   if (modeCursor == 0) {
     textAt(15, 81, "Roll pairs; equal dropped.", TEXT, PANEL2);
     textAt(15, 93, "Handles fixed face bias.", TEXT, PANEL2);
@@ -230,9 +251,9 @@ void drawModeSelect() {
     textAt(15, 93, "plus ESP32-S3 physical RNG.", TEXT, PANEL2);
     textAt(15, 105, "Dice bias harmless here.", MINT, PANEL2);
   }
-  textAt(15, 118, ";=up .=down  Enter: select", MUTED, BG);
+  textAt(15, 122, ";=up .=down  Enter: select", MUTED, BG);
   String idLine = String(FW_VERSION) + " " + String(FW_GIT_SHA);
-  textAt(8, 126, idLine, MUTED, BG);
+  textAt(168, 122, idLine, MUTED, BG);
 }
 
 void drawMain() {
@@ -240,47 +261,30 @@ void drawMain() {
   drawHeader(drawnScreen != 1);
   drawnScreen = 1;
   computeStats();
-  fillRound(7, 29, 118, 66, 8, PANEL); M5Cardputer.Display.drawRoundRect(7, 29, 118, 66, 8, 0x3338);
-  textAt(15, 37, "rolls", MUTED, PANEL); textAt(15, 50, String(rollCount), entropyReady() ? GREEN : GOLD, PANEL, 2);
-  textAt(68, 50, entropyMode == MODE_VN ? "VN " + String(vnBits) + "/256"
+  fillRound(7, 21, 118, 70, 8, PANEL); M5Cardputer.Display.drawRoundRect(7, 21, 118, 70, 8, BORDER);
+  textAt(15, 28, "ROLLS", MUTED, PANEL); textAt(15, 41, String(rollCount), entropyReady() ? GREEN : VIOLET, PANEL, 2);
+  textAt(68, 41, entropyMode == MODE_VN ? "VN " + String(vnBits) + "/256"
                         : (entropyMode == MODE_RAW ? "RAW " + String(rollCount) + "/100"
                                                    : "D+H " + String(rollCount) + "/100"),
          entropyReady() ? GREEN : GOLD, PANEL);
-  textAt(15, 75, "ties " + String(ties) + "  streak " + String(maxStreak), MUTED, PANEL);
-  textAt(15, 86, sdOK ? "SD report enabled" : "SD not mounted", sdOK ? MINT : ROSE, PANEL);
+  textAt(15, 67, "ties " + String(ties) + "  streak " + String(maxStreak), MUTED, PANEL);
+  textAt(15, 79, sdOK ? "SD report enabled" : "SD not mounted", sdOK ? GREEN : ROSE, PANEL);
   drawBars();
-  fillRound(7, 103, 226, 27, 7, PANEL2); M5Cardputer.Display.drawRoundRect(7, 103, 226, 27, 7, 0x3338);
+  fillRound(7, 96, 226, 34, 7, PANEL2); M5Cardputer.Display.drawRoundRect(7, 96, 226, 34, 7, BORDER);
   rollTail(24);
-  textAt(15, 110, tailBuf[0] ? tailBuf : "press one key: 1..6", TEXT, PANEL2);
-  textAt(15, 121, statusLine, hasHash ? GREEN : MUTED, PANEL2);
-}
-
-void drawPassInput() {
-  drawHeader(drawnScreen != 2);
-  drawnScreen = 2;
-  fillRound(7, 29, 226, 66, 8, PANEL); M5Cardputer.Display.drawRoundRect(7, 29, 226, 66, 8, 0x3338);
-  textAt(15, 37, passConfirmPhase ? "RE-ENTER (25th unique word)" : "BIP39 PASSPHRASE (25th unique word)", GOLD, PANEL);
-  textAt(15, 51, "ASCII only, NFKD-normalized.", TEXT, PANEL);
-  textAt(15, 63, "OPTIONAL: empty = default wallet.", GREEN, PANEL);
-  textAt(15, 77, passConfirmPhase ? "Must match first entry." : "Entered twice, masked.", TEXT, PANEL);
-  char maskBuf[WC_PASSPHRASE_MAX_LEN];
-  size_t showLen = passLen < sizeof(maskBuf) - 1 ? passLen : sizeof(maskBuf) - 1;
-  memset(maskBuf, '*', showLen); maskBuf[showLen] = 0;
-  textAt(15, 90, showLen ? maskBuf : "<empty>", CYAN, BG);
-  fillRound(7, 103, 226, 27, 7, PANEL2); M5Cardputer.Display.drawRoundRect(7, 103, 226, 27, 7, 0x3338);
-  textAt(15, 110, "len " + String(passLen) + "/" + String(WC_PASSPHRASE_MAX_LEN - 1), MUTED, PANEL2);
-  textAt(15, 121, "Enter=confirm  Del=" + String(passLen ? "backspace" : (passConfirmPhase ? "edit" : "cancel")), TEXT, PANEL2);
+  textAt(15, 104, tailBuf[0] ? tailBuf : "press one key: 1..6", TEXT, PANEL2);
+  textAt(15, 118, statusLine, hasHash ? GREEN : MUTED, PANEL2);
 }
 
 void drawQuiz() {
   drawHeader(drawnScreen != 3);
   drawnScreen = 3;
-  fillRound(7, 29, 226, 66, 8, PANEL); M5Cardputer.Display.drawRoundRect(7, 29, 226, 66, 8, 0x3338);
-  textAt(15, 37, "BACKUP CHECK " + String(quizStep + 1) + "/4", GOLD, PANEL);
+  fillRound(7, 21, 226, 74, 8, PANEL); M5Cardputer.Display.drawRoundRect(7, 21, 226, 74, 8, BORDER);
+  textAt(15, 29, "BACKUP CHECK " + String(quizStep + 1) + "/4", VIOLET, PANEL);
   textAt(15, 51, "Type word #" + String(quizPos[quizStep] + 1), TEXT, PANEL);
   textAt(15, 65, "then press Enter.", MUTED, PANEL);
   textAt(15, 81, quizBuf, CYAN, PANEL);
-  fillRound(7, 103, 226, 27, 7, PANEL2); M5Cardputer.Display.drawRoundRect(7, 103, 226, 27, 7, 0x3338);
+  fillRound(7, 99, 226, 31, 7, PANEL2); M5Cardputer.Display.drawRoundRect(7, 99, 226, 31, 7, BORDER);
   textAt(15, 110, statusLine, MUTED, PANEL2);
   textAt(15, 121, "Enter=check  Del=" + String(quizLen ? "backspace" : "cancel"), TEXT, PANEL2);
 }
@@ -291,8 +295,8 @@ void drawResult() {
   drawHeader(drawnScreen != 4);
   drawnScreen = 4;
   computeStats(); String why; bool ok = assessmentOK(&why);
-  fillRound(8, 28, 224, 98, 10, PANEL); M5Cardputer.Display.drawRoundRect(8, 28, 224, 98, 10, ok ? GREEN : RED);
-  textAt(18, 36, "page " + String(resultPage + 1) + "/" + String(PAGE_COUNT) + "  ;=up .=down  esc=back", MUTED, PANEL);
+  fillRound(7, 20, 226, 110, 9, PANEL); M5Cardputer.Display.drawRoundRect(7, 20, 226, 110, 9, ok ? VIOLET : RED);
+  textAt(15, 26, "PAGE " + String(resultPage + 1) + "/" + String(PAGE_COUNT) + "   ;/.-navigate   esc-back", MUTED, PANEL);
   if (resultPage == PAGE_FINGERPRINT) {
     textAt(18, 48, "1) SHA256 FINGERPRINT", GREEN, PANEL);
     M5Cardputer.Display.setTextSize(2); M5Cardputer.Display.setTextColor(CYAN, PANEL);
@@ -314,12 +318,6 @@ void drawResult() {
       wc_secure_zero(wordLine, sizeof(wordLine));
     }
     textAt(18, 116, backupVerified ? "Backup verified." : "Write words down. Enter=check", backupVerified ? GREEN : ROSE, PANEL);
-  } else if (resultPage == PAGE_PASSPHRASE) {
-    textAt(18, 50, "3) PASSPHRASE", GOLD, PANEL);
-    textAt(18, 64, passLen1 ? "set (never shown)" : "empty (default)", TEXT, PANEL);
-    textAt(18, 78, "Changes every address.", TEXT, PANEL);
-    textAt(18, 96, "Lose it => funds lost.", ROSE, PANEL);
-    textAt(18, 108, "ASCII-only input.", MUTED, PANEL);
   } else if (resultPage == PAGE_ADDRESS) {
     if (!backupVerified) {
       textAt(18, 46, "4) SOLANA ADDRESS", CYAN, PANEL);
@@ -334,7 +332,7 @@ void drawResult() {
       snprintf(al, sizeof(al), "2|%.19s", address + 19); M5Cardputer.Display.drawString(al, 12, 74);
       snprintf(al, sizeof(al), "3|%.6s", address + 38); M5Cardputer.Display.drawString(al, 12, 90);
       textAt(18, 108, "Path m/44'/501'/0'/0'", MUTED, PANEL);
-      textAt(18, 118, passLen1 ? "passphrase restore: verify" : "Phantom path-compatible", passLen1 ? ROSE : MUTED, PANEL);
+      textAt(18, 118, "24 words -> Solflare import", MUTED, PANEL);
     }
   } else if (resultPage == PAGE_SANITY) {
     textAt(18, 50, ok ? "5) SANITY: OK" : "5) SANITY: BLOCK", ok ? GREEN : RED, PANEL);
@@ -393,8 +391,7 @@ void writeReport(bool ok, const String& why) {
   f.println("audit_fingerprint_sha256=" + String(entropyHex));
   // address is gated on backup verification: never written to SD before the quiz passes
   f.println(backupVerified ? ("address=" + String(address[0] ? address : "n/a")) : "address=n/a (backup not verified)");
-  f.println(passLen1 > 0 ? "passphrase_set=yes" : "passphrase_set=no");
-  f.println("passphrase_ascii_only=yes");
+  f.println("bip39_passphrase=empty (not supported by firmware)");
   f.println(backupVerified ? "backup_verified=yes" : "backup_verified=no");
   f.println("roll_transcript_saved=false");
   f.println("raw_vn_entropy_saved=false");
@@ -497,32 +494,17 @@ void buildWallet() {
   // deterministic backup-quiz positions from the audit fingerprint
   wc_quiz_positions(hash, quizPos);
 
-  if (!wc_nfkd(passphrase, passphraseNfkd, sizeof(passphraseNfkd))) {
-    // normalization failure: wipe the entropy and fingerprint that now exist
-    // on this path — every exit after entropy material exists must wipe it
-    wc_secure_zero(bytes, sizeof(bytes));
-    wc_secure_zero(hash, sizeof(hash));
-    entropyHex[0] = 0;
-    statusLine = "passphrase normalization failed";
-    passInput = true; hasHash = false;
-    drawPassInput();
-    return;
-  }
   wc_mnemonic_from_entropy(bytes, mnemonic);
   parseMnemonicWords();
   uint8_t seed[64];
-  wc_seed_from_mnemonic(mnemonic, passphraseNfkd, seed);
+  // This appliance deliberately implements the interoperable 24-word wallet
+  // only. BIP39's optional passphrase is always the empty string.
+  wc_seed_from_mnemonic(mnemonic, "", seed);
   wc_solana_address(seed, address);
   wipeBytes(seed, 64);
   wipeBytes(bytes, 32);
-  // passphrase material is no longer needed once the seed is derived:
-  // keep only the set/empty flag (passLen1) for display and audit
-  wipeChars(passphrase, sizeof(passphrase));
-  wipeChars(passphraseConfirm, sizeof(passphraseConfirm));
-  wipeChars(passphraseNfkd, sizeof(passphraseNfkd));
   wipeBytes(hash, 32);
 
-  passInput = false;
   backupVerified = false;
   quizActive = false;
   quizStep = 0;
@@ -531,18 +513,6 @@ void buildWallet() {
   waitingRelease = true;
   hasHash = true; statusLine = "backup: verify words (Enter)"; resultPage = PAGE_FINGERPRINT; lastAssessment = why;
   writeReport(true, why); drawResult();
-}
-
-void startPassphrase() {
-  wipeChars(passphrase, sizeof(passphrase));
-  wipeChars(passphraseConfirm, sizeof(passphraseConfirm));
-  passLen = 0; passLen1 = 0;
-  passConfirmPhase = false;
-  edgeReset();
-  inputAwaitRelease = true;  // the Enter that opened this screen must be released first
-  passInput = true; showingResult = false; hasHash = false; clearArmed = false;
-  statusLine = "passphrase: Enter=confirm";
-  drawPassInput();
 }
 
 void handleModeSelect(const Keyboard_Class::KeysState& ks) {
@@ -565,46 +535,6 @@ void handleModeSelect(const Keyboard_Class::KeysState& ks) {
     drawMain();
     return;
   }
-}
-
-void handlePassInput(const Keyboard_Class::KeysState& ks) {
-  WcKeyEdges e; keyEdges(ks, e);
-  if (e.enter) {
-    if (passConfirmPhase) {
-      if (wc_ct_equal(passphrase, passphraseConfirm, WC_PASSPHRASE_MAX_LEN)) {
-        passLen = passLen1;
-        passInput = false;
-        buildWallet();
-        return;
-      }
-      wipeChars(passphrase, sizeof(passphrase));
-      wipeChars(passphraseConfirm, sizeof(passphraseConfirm));
-      passLen = 0; passLen1 = 0; passConfirmPhase = false;
-      statusLine = "MISMATCH - enter again";
-      drawPassInput();
-      return;
-    }
-    if (passLen == 0) { passInput = false; passLen1 = 0; buildWallet(); return; }
-    passLen1 = passLen; passLen = 0;
-    passConfirmPhase = true;
-    statusLine = "re-enter to confirm";
-    drawPassInput();
-    return;
-  }
-  if (e.del) {
-    char* buf = passConfirmPhase ? passphraseConfirm : passphrase;
-    if (passLen) { buf[--passLen] = 0; statusLine = "char erased"; drawPassInput(); return; }
-    if (passConfirmPhase) { passConfirmPhase = false; passLen = passLen1; statusLine = "edit first entry"; drawPassInput(); return; }
-    passInput = false; waitingRelease = true; statusLine = "passphrase cancelled"; drawMain(); return;
-  }
-  if (e.addedCount == 1) {
-    char* buf = passConfirmPhase ? passphraseConfirm : passphrase;
-    if (passLen < WC_PASSPHRASE_MAX_LEN - 1) { buf[passLen++] = e.added[0]; statusLine = "passphrase updated"; }
-    else statusLine = "passphrase too long";
-    drawPassInput();
-    return;
-  }
-  if (e.chord) { statusLine = "one key at a time"; drawPassInput(); return; }
 }
 
 void handleQuiz(const Keyboard_Class::KeysState& ks) {
@@ -664,14 +594,10 @@ void clearEverything() {
   wipeRolls();
   wipeChars(tailBuf, sizeof(tailBuf));
   wipeChars(hwSample, sizeof(hwSample));
-  wipeChars(passphrase, sizeof(passphrase));
-  wipeChars(passphraseConfirm, sizeof(passphraseConfirm));
-  wipeChars(passphraseNfkd, sizeof(passphraseNfkd));
   wipeChars(mnemonic, sizeof(mnemonic));
   wipeChars(address, sizeof(address));
   memset(quizBuf, 0, sizeof(quizBuf));
-  passLen = 0; passLen1 = 0; quizLen = 0;
-  passInput = false; passConfirmPhase = false;
+  quizLen = 0;
   quizActive = false; backupVerified = false;
   entropyHex[0] = 0;
   hasHash = false;
@@ -719,10 +645,9 @@ void loop() {
     handleModeSelect(ks);
     return;
   }
-  if (passInput || quizActive) {
+  if (quizActive) {
     if (inputAwaitRelease) return;  // ignore the keypress that opened this mode
-    if (passInput) handlePassInput(ks);
-    else handleQuiz(ks);
+    handleQuiz(ks);
     return;
   }
   if (waitingRelease) return;
@@ -794,7 +719,7 @@ void loop() {
         drawMain();
         return;
       }
-      startPassphrase();
+      buildWallet();
     } else {
       buildWallet();
     }

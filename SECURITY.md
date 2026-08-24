@@ -3,17 +3,17 @@
 ## Current scope
 
 - Cardputer ADV dice-entry firmware
-- entropy mode fork at boot: Von Neumann extraction (default, bias removed) or raw dice (3 bits/roll, bias kept)
+- entropy mode fork at boot: Von Neumann extraction (default, bias removed), fair-d6 raw conversion (bias kept), or Dice + HWRNG
 - Von Neumann extraction from physical d6 rolls
 - 256 accepted comparison bits
 - SHA-256 audit fingerprint display
 - BIP39 mnemonic generation (24 words, 256-bit ENT)
-- BIP39 passphrase (ASCII-only input, entered twice, NFKD-normalized)
+- fixed empty BIP39 passphrase; restore is intentionally based on the 24 words alone
 - SLIP-0010 Ed25519 derivation, Solana path m/44'/501'/0'/0'
 - Solana address derivation (base58 ed25519 pubkey)
 - backup verification quiz (4 typed words) gating the address page
 - fail-closed radio checks: wallet generation is blocked unless Wi-Fi and Bluetooth are verified off
-- SD sanity report that intentionally excludes roll transcript, raw entropy, mnemonic, passphrase, and seed
+- SD sanity report that intentionally excludes roll transcript, raw entropy, mnemonic, and seed
 
 ## Not implemented yet
 
@@ -23,19 +23,16 @@
 
 - The mnemonic is displayed on-device for backup. Treat it as the wallet's private key.
 - The raw private key and seed are never displayed, exported, or written to SD.
-- No Arduino `String` exists in any path carrying roll/entropy/mnemonic/passphrase/address data — fixed buffers and `snprintf` slices only. The address page stays locked until the 4-word backup quiz passes.
+- No Arduino `String` exists in any path carrying roll/entropy/mnemonic/address data — fixed buffers and `snprintf` slices only. The address page stays locked until the 4-word backup quiz passes.
 - All secret-bearing temporaries in `lib/wallet_core` (HMAC pads, PBKDF2 U/T blocks, SLIP-0010 intermediate keys and chaincodes, the ed25519 private-key temporary, UTF-8 normalization buffers, entropy and seed copies) are wiped with volatile writes (`wc_secure_zero`) before they leave scope or are freed.
-- Firmware wipes rolls, passphrase (both entries), normalized passphrase, mnemonic, and address buffers on clear-all.
-- `wc_nfkd` never truncates: oversized normalized output returns failure, and the firmware re-prompts instead of deriving with a silently truncated passphrase.
-- The SD report contains only: sanity verdict, counters, face histogram, audit fingerprint, public address, passphrase-set flag (not the passphrase), backup-verified flag, and explicit `*_saved=false` flags.
+- Firmware wipes rolls, mnemonic, and address buffers on clear-all.
+- The SD report contains only: sanity verdict, counters, face histogram, audit fingerprint, public address, fixed-empty-passphrase metadata, backup-verified flag, and explicit `*_saved=false` flags.
 
-## Passphrase input
+## BIP39 passphrase policy
 
-- ASCII-only (0x20–0x7E), accepted one key at a time via per-key edge detection; chorded/overlapping keys are rejected with a visible warning, never silently merged or dropped.
-- Non-empty passphrases are entered twice; entries are compared in full with a constant-time no-early-exit XOR (wc_ct_equal) before any derivation runs. BIP39 has no passphrase checksum — double-entry is the only typo defense.
-- Empty passphrase (default) skips confirmation.
-- Typed-input modes (passphrase, quiz) ignore the keypress that opened them until it is fully released — a held Enter can never double as the first confirmation.
-- Passphrase, its confirmation copy, and the normalized copy are wiped immediately after seed derivation; only the set/empty flag survives.
+- The optional BIP39 passphrase is always the empty string. The firmware has no passphrase entry screen or passphrase state.
+- The 24-word mnemonic alone determines the BIP39 seed used by this firmware. Users who need a separate passphrase-based wallet must derive and verify it on another trusted signing device.
+- Backup-quiz input still uses per-key edge detection; chorded or overlapping keys are rejected visibly.
 
 ## Entropy mode fork
 
@@ -60,14 +57,14 @@ At boot the device offers three extraction modes:
   value (XOR argument). A good unpredictable dice transcript can hedge an
   undetected HWRNG failure. Detected catastrophic HWRNG failure (all 16
   32-byte chunks identical) BLOCKS generation — no silent fallback to dice.
-  HWRNG is collected at the last possible moment (after passphrase confirm
-  and radio verification), never at boot or mode selection. The SD report
+  HWRNG is collected at the last possible moment (after entropy entry and
+  radio verification), never at boot or mode selection. The SD report
   records metadata only (mode, rolls, conditioner, sample bytes, combiner,
   domain version) — never transcripts, digests, or HWRNG samples.
 
 ## Radio posture
 
-- Wi-Fi and Bluetooth are disabled at boot, and state is re-verified: once after initialization, again immediately before passphrase entry, and again inside wallet derivation. Any failed verification shows `RADIO STATE ERROR` and blocks generation (fail closed).
+- Wi-Fi and Bluetooth are disabled at boot, and state is re-verified after initialization, immediately before derivation, and again inside hybrid wallet derivation. Any failed verification shows `RADIO STATE ERROR` and blocks generation (fail closed).
 
 ## Device trust / firmware integrity
 
@@ -104,8 +101,8 @@ personally control — not as tamper-evident hardware.
 
 ## Compatibility caveat
 
-- Empty-passphrase wallets follow Phantom's documented m/44'/501'/0'/0' path.
-- Non-empty-passphrase restore has NOT been verified against Phantom/Solflare flows. The device UI warns about this on the address page. Verify restore in your wallet app with a small amount before depositing.
+- Wallets use an empty BIP39 passphrase and m/44'/501'/0'/0'. Solflare can import a recovery phrase and offers derivation-path selection in its advanced import flow.
+- Verify that the restored address exactly matches the address displayed by this device before depositing funds.
 
 ## Verification
 
@@ -133,4 +130,4 @@ Hardware-in-the-loop tests (scripted 615-roll replay, fingerprint reproducibilit
 
 Open a GitHub issue for non-secret bug reports.
 
-Never paste dice transcripts, mnemonics, passphrases, private keys, or wallet seed material into an issue, chat, screenshot, or cloud document.
+Never paste dice transcripts, mnemonics, private keys, or wallet seed material into an issue, chat, screenshot, or cloud document.

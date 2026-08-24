@@ -9,9 +9,10 @@ Dice-entropy BIP39 wallet generator: physical d6 rolls → Von Neumann extractio
 ## Current scope
 
 - colorful 240x135 Cardputer ADV UI
+- native battery percentage and gauge in the compact status rail
 - boot fork: select entropy mode with arrows — 1) Von Neumann (unbiased, ~615 rolls), 2) Fair d6 (100 rolls, exact base-6 rejection, bias NOT corrected), 3) Dice + HWRNG (100 entries hashed + ESP32-S3 SAR RNG)
 - physical d6 input uses a strict press-release FSM: one complete keypress = one roll; dice-key chords are ignored
-- typed input (passphrase, backup check) uses per-key edge detection: overlapping/chorded keys are rejected with an explicit warning, never silently merged or dropped
+- typed backup-check input uses per-key edge detection: overlapping/chorded keys are rejected with an explicit warning, never silently merged or dropped
 - Von Neumann extraction from roll pairs:
   - equal pair: discarded
   - first < second: bit 0
@@ -22,12 +23,12 @@ Dice-entropy BIP39 wallet generator: physical d6 rolls → Von Neumann extractio
 - no minimum fixed roll-count gate; the session buffer caps at 1024 rolls (fair dice never get near it; heavily biased dice in VN mode may hit it — clear and re-roll if so)
 - SHA-256 audit fingerprint display, split into large readable numbered lines
 - BIP39 mnemonic generation (24 words, English wordlist, 256-bit ENT)
-- BIP39 passphrase, entered twice with constant-time comparison (empty passphrase = default), ASCII-only input (0x20–0x7E), NFKD-normalized
+- fixed empty BIP39 passphrase: the wallet is restored from the 24 words alone; optional BIP39 passphrases are intentionally not supported on-device
 - SLIP-0010 Ed25519 derivation (hardened-only), Solana path m/44'/501'/0'/0'
 - Solana address derivation and display (base58 ed25519 pubkey)
 - mnemonic backup verification quiz: 4 random positions must be typed back correctly before the address page unlocks
 - fail-closed radios: wallet generation is blocked if Wi-Fi/Bluetooth state cannot be verified as off
-- result pages for fingerprint, mnemonic (3 words per page), passphrase status, address (gated on backup verification), sanity checks, and SD audit
+- result pages for fingerprint, mnemonic (6 words per page), address (gated on backup verification), sanity checks, and SD audit
 - SD report at `/dice_wallet/report.txt` when available
 - startup disables Wi-Fi and Bluetooth; `RADIOS OFF` is shown only when the firmware sees radios disabled
 
@@ -47,7 +48,7 @@ physical d6 rolls
   ESP32-S3 SAR RNG)
 → rawEntropy[32]
 → BIP39 ENT (24 words + 8-bit checksum)
-→ PBKDF2-HMAC-SHA512("mnemonic" || NFKD(passphrase), 2048 rounds) = seed[64]
+→ PBKDF2-HMAC-SHA512("mnemonic", 2048 rounds; empty BIP39 passphrase) = seed[64]
 → SLIP-0010 Ed25519 m/44'/501'/0'/0'
 → ed25519 pubkey → base58 = Solana address
 ```
@@ -79,20 +80,19 @@ SHA256("DiceWallet audit v1" || rawEntropy[32])
 
 ## Wallet compatibility
 
-- Empty BIP39 passphrase: m/44'/501'/0'/0' is Phantom's documented path — restore with the 24 words alone is expected to work in Phantom/Solflare.
-- Non-empty BIP39 passphrase: Phantom/Solflare restore flows do not document an additional passphrase field. Restore support for the passphrase case has NOT been verified against those wallets — test with a small amount first, and confirm your wallet app restores the same address.
+- The firmware always uses an empty BIP39 passphrase and derives m/44'/501'/0'/0'. Restore uses the 24 words alone.
+- Solflare accepts an existing recovery phrase and offers derivation-path selection under its advanced import flow. Select m/44'/501'/0'/0' if automatic discovery does not show the displayed address.
+- Always confirm that the restored address exactly matches the address shown by this device before depositing funds.
 
 ## Controls
 
 - `1`..`6`: enter die roll
 - `1`..`6` on result page: return to input and record the roll
-- `Enter`: validate; with >= 256 VN bits and verified radios-off, opens the passphrase screen
-- `Enter` on passphrase screen: confirm entry (non-empty passphrase must be entered twice; mismatch restarts)
+- `Enter`: with sufficient entropy and verified radios-off, derive the 24-word wallet
 - `Enter` on mnemonic pages: start backup verification quiz (type 4 prompted words, one at a time; 4/4 correct unlocks the address page)
 - Up/Left or `W/A`: previous result page
 - Down/Right or `S/D`: next result page
 - `Del` on input page: remove last roll
-- `Del` on passphrase screen: backspace (or cancel/edit on empty)
 - `Del` on quiz screen: backspace (or cancel quiz on empty)
 - `Del` on result page: arm modal clear-all confirmation
 - `Y`: confirm clear-all
@@ -108,7 +108,7 @@ Host-side verification (`tests/`) compiles the exact on-device `lib/wallet_core`
 - Solana: m/44'/501'/0'/0' addresses cross-checked between PyNaCl and cryptography (8×)
 - NFKD: NFD vs NFC passphrase forms produce identical seeds
 - Von Neumann pipeline: fixed 700-roll transcript → entropy → fingerprint → mnemonic → seed → address, end-to-end (VN and raw paths)
-- keyboard edge parsing (passphrase/quiz input): boundary chars `' '`, `'_'`, '`', `'a'`, `'z'`, `'~'`, chord rejection, enter/del edge triggering, held-key suppression
+- keyboard edge parsing used by the backup quiz: boundary chars, chord rejection, enter/del edge triggering, and held-key suppression
 - wc_ct_equal constant-time comparison
 - contracts: wc_nfkd never truncates (overflow → false), base58 bounds rejection
 
@@ -168,7 +168,7 @@ for host tests — see `tests/build_host_test.sh`.
 # 1. get the exact release source (or the sha shown by a flashed device)
 git clone https://github.com/andrzejsantocki/solana-dice-bip39-wallet-generator-esp32.git
 cd solana-dice-bip39-wallet-generator-esp32
-git checkout v0.3.0                  # tag = released source
+git checkout v0.4.0                  # tag = released source
 
 # 2. audit the source (SECURITY.md summarizes the threat model)
 
@@ -187,10 +187,10 @@ python -m platformio run
 # 6. compare against the published artifact
 sha256sum .pio/build/cardputer_adv_launcher/firmware.bin
 # expect: releases/DiceWallet-cardputer-adv.bin.sha256 (repo) or the
-# .sha256 asset attached to the GitHub release v0.3.0
+# .sha256 asset attached to the GitHub release v0.4.0
 
 # 7. flash your OWN build and verify identity on-device:
-#    boot menu bottom line shows: 0.3.0 <git-sha>  ==  the tag commit
+#    boot menu bottom line shows: 0.4.0 <git-sha>  ==  the tag commit
 ```
 
 If the hash matches and the boot screen shows the tag commit, the
