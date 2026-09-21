@@ -19,8 +19,14 @@ def _git(*args):
 
 import os  # noqa: E402  (kept near Import for readability)
 
-sha = _git("rev-parse", "--short", "HEAD") or "unknown"
+sha = _git("rev-parse", "--short=12", "HEAD")
+if not sha and os.environ.get("GITHUB_SHA"):
+    sha = os.environ["GITHUB_SHA"][:12]
+if not sha:
+    raise RuntimeError("Cannot determine firmware source commit; refusing untraceable build")
 tag = _git("describe", "--tags", "--exact-match")
+if not tag and os.environ.get("GITHUB_REF_TYPE") == "tag":
+    tag = os.environ.get("GITHUB_REF_NAME", "")
 dirty = "+" if _git("status", "--porcelain") else ""
 os.makedirs(".tmp", exist_ok=True)
 

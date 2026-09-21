@@ -578,6 +578,12 @@ void handleQuiz(const Keyboard_Class::KeysState& ks) {
 }
 
 void acceptRoll(char c) {
+  // Generated mnemonic/address state is immutable until explicit clear-all.
+  if (!wc_roll_input_allowed(hasHash)) {
+    statusLine = "clear wallet before new rolls";
+    drawResult();
+    return;
+  }
   if (c < '1' || c > '6') return;
   if ((entropyMode == MODE_RAW || entropyMode == MODE_HYBRID) && rollCount >= 100) {
     statusLine = "100 rolls complete"; drawMain(); return;
@@ -591,6 +597,10 @@ void acceptRoll(char c) {
 }
 
 void clearEverything() {
+  // Reports contain correlatable fingerprints/address metadata. Remove the
+  // current report as part of clear-all (SD wear-leveling means this is not a
+  // forensic secure erase; destroy/reformat media for that threat model).
+  if (sdOK && SD.exists("/dice_wallet/report.txt")) SD.remove("/dice_wallet/report.txt");
   wipeRolls();
   wipeChars(tailBuf, sizeof(tailBuf));
   wipeChars(hwSample, sizeof(hwSample));
@@ -616,18 +626,25 @@ void initSD() {
 }
 }  // namespace
 
-void disableRadios() {
-  WiFi.disconnect(true, true);
-  WiFi.mode(WIFI_OFF);
-  esp_wifi_stop();
-  btStop();
-  esp_bt_controller_disable();
+bool disableRadios() {
+  // Arduino wrappers do not expose all SDK error codes; validate their bool
+  // results, accept ESP-IDF's expected "already stopped/not initialized"
+  // states, then verify logical controller state independently.
+  bool wifiDisconnectOK = WiFi.disconnect(true, true);
+  bool wifiModeOK = WiFi.mode(WIFI_OFF);
+  esp_err_t wifiStop = esp_wifi_stop();
+  bool wifiStopOK = wifiStop == ESP_OK || wifiStop == ESP_ERR_WIFI_NOT_INIT ||
+                    wifiStop == ESP_ERR_WIFI_NOT_STARTED;
+  bool btStopOK = btStop();
+  esp_err_t btDisable = esp_bt_controller_disable();
+  bool btDisableOK = btDisable == ESP_OK || btDisable == ESP_ERR_INVALID_STATE;
+  return wifiDisconnectOK && wifiModeOK && wifiStopOK && btStopOK &&
+         btDisableOK && verifyRadios();
 }
 
 void setup() {
   auto cfg = M5.config(); M5Cardputer.begin(cfg, true); M5Cardputer.Display.setRotation(1); M5Cardputer.Display.setFont(&fonts::Font0);
-  disableRadios();
-  radiosOffOK = verifyRadios();
+  radiosOffOK = disableRadios();
   wipeRolls();
   initSD();
   statusLine = "select entropy mode";

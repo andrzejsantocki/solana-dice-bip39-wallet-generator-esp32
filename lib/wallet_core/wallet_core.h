@@ -63,7 +63,9 @@ void wc_hybrid_combine(const uint8_t hw[32], const uint8_t dice[32], uint8_t out
 
 // Conditioned HWRNG digest for hybrid mode. Collects 16 x 32-byte chunks
 // from the SAR entropy source, hands them to the shared streaming
-// conditioner (domain separation + all-identical-blocks health check).
+// conditioner (domain separation + repetition/adaptive-proportion/short-cycle
+// catastrophic-failure checks). These detect obvious failures; they do not
+// certify hardware entropy quality.
 // Single cleanup path: bootloader_random_disable() always runs, chunk
 // buffers always wiped, failed runs zero the output. This is the only
 // ESP-hardware part of the hybrid path; the conditioner is host-tested.
@@ -84,7 +86,8 @@ extern "C" bool wc_platform_hwrng_digest(uint8_t out[32], char sample_out[24]);
 void wc_mnemonic_from_entropy(const uint8_t ent[32], char* out);
 
 // PBKDF2-HMAC-SHA512, 2048 rounds, salt "mnemonic" || passphrase_nfkd.
-void wc_seed_from_mnemonic(const char* mnemonic, const char* passphrase_nfkd,
+// Fails closed for NULL or unterminated/oversized inputs; seed is zeroed.
+bool wc_seed_from_mnemonic(const char* mnemonic, const char* passphrase_nfkd,
                            uint8_t seed[64]);
 
 // NFKD normalization. Returns false if input is invalid UTF-8 or the
@@ -92,8 +95,14 @@ void wc_seed_from_mnemonic(const char* mnemonic, const char* passphrase_nfkd,
 bool wc_nfkd(const char* in, char* out, size_t out_cap);
 
 // ---- SLIP-0010 ed25519 (hardened-only, as used by Solana) ----
-void wc_slip10_master(const uint8_t* seed, size_t seed_len, uint8_t kL[32],
+// seed_len is limited to 128 by the fixed HMAC workspace. Invalid input fails
+// closed and zeroes outputs.
+bool wc_slip10_master(const uint8_t* seed, size_t seed_len, uint8_t kL[32],
                       uint8_t chaincode[32]);
+
+// UI policy shared with host tests: once generated secrets exist, dice input
+// remains locked until the explicit clear-all path wipes them.
+bool wc_roll_input_allowed(bool secrets_present);
 // index is the raw child index; 0x80000000 is OR-ed in internally.
 // out buffers may alias the input buffers.
 void wc_slip10_child(const uint8_t kL[32], const uint8_t chaincode[32],

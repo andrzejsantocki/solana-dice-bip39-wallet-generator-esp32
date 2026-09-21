@@ -20,8 +20,11 @@ jobs:
         run: bash tests/build_host_test.sh
         env:
           SANFLAGS: -fsanitize=address,undefined
-      - name: Run crypto + pipeline vector tests
+      - name: Run crypto + pipeline vector tests (sanitizers fail closed)
         run: ./tests/host_test/host_test
+        env:
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+          ASAN_OPTIONS: halt_on_error=1:abort_on_error=1
 
   platformio:
     runs-on: ubuntu-latest
@@ -33,7 +36,7 @@ jobs:
         with:
           python-version: '3.10'
       - name: Install PlatformIO
-        run: python -m pip install platformio==6.1.19
+        run: python -m pip install --require-hashes -r requirements-build.txt
       - name: Build firmware
         run: python -m platformio run
       - name: Prepare firmware assets

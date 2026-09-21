@@ -2,6 +2,10 @@
 #include "sha512.h"
 #include "ge.h"
 
+static void secure_zero(void *p, size_t n) {
+    volatile unsigned char *v = (volatile unsigned char *)p;
+    while (n--) *v++ = 0;
+}
 
 void ed25519_create_keypair(unsigned char *public_key, unsigned char *private_key, const unsigned char *seed) {
     ge_p3 A;
@@ -13,4 +17,5 @@ void ed25519_create_keypair(unsigned char *public_key, unsigned char *private_ke
 
     ge_scalarmult_base(&A, private_key);
     ge_p3_tobytes(public_key, &A);
+    secure_zero(&A, sizeof(A));
 }
