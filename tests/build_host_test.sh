@@ -4,6 +4,8 @@ cd "$(dirname "$0")/.."
 ROOT=$(pwd)
 INC="-Ilib/wallet_core -Ilib/bip39 -Ilib/ed25519 -Ilib/utf8proc -Itests/host_test"
 mkdir -p .tmp/obj
+# Never mix stale objects built with different sanitizer/compiler flags.
+rm -f .tmp/obj/*.o
 
 # Portable toolchain detection: local w64devkit (author Windows machine) or
 # system gcc/g++ (CI ubuntu runner).
