@@ -29,7 +29,7 @@ Dice-entropy BIP39 wallet generator: physical d6 rolls → Von Neumann extractio
 - mnemonic backup verification quiz: 4 random positions must be typed back correctly before the address page unlocks
 - fail-closed radios: wallet generation is blocked if Wi-Fi/Bluetooth state cannot be verified as off
 - result pages for fingerprint, mnemonic (6 words per page), address (gated on backup verification), sanity checks, and SD audit
-- SD report at `/dice_wallet/report.txt` when available
+- SD report at `/dice_wallet/report.txt` when available; clear-all deletes the file (flash wear-leveling means forensic erasure still requires media destruction/reformatting)
 - startup disables Wi-Fi and Bluetooth; `RADIOS OFF` is shown only when the firmware sees radios disabled
 
 ## Not implemented yet
@@ -87,7 +87,7 @@ SHA256("DiceWallet audit v1" || rawEntropy[32])
 ## Controls
 
 - `1`..`6`: enter die roll
-- `1`..`6` on result page: return to input and record the roll
+- `1`..`6` on a result page: blocked while mnemonic/address state exists; use `Del`, then `Y`, to clear first
 - `Enter`: with sufficient entropy and verified radios-off, derive the 24-word wallet
 - `Enter` on mnemonic pages: start backup verification quiz (type 4 prompted words, one at a time; 4/4 correct unlocks the address page)
 - Up/Left or `W/A`: previous result page
@@ -168,7 +168,7 @@ for host tests — see `tests/build_host_test.sh`.
 # 1. get the exact release source (or the sha shown by a flashed device)
 git clone https://github.com/andrzejsantocki/solana-dice-bip39-wallet-generator-esp32.git
 cd solana-dice-bip39-wallet-generator-esp32
-git checkout v0.4.0                  # tag = released source
+git checkout v0.5.0                  # tag = released source
 
 # 2. audit the source (SECURITY.md summarizes the threat model)
 
@@ -187,10 +187,10 @@ python -m platformio run
 # 6. compare against the published artifact
 sha256sum .pio/build/cardputer_adv_launcher/firmware.bin
 # expect: releases/DiceWallet-cardputer-adv.bin.sha256 (repo) or the
-# .sha256 asset attached to the GitHub release v0.4.0
+# .sha256 asset attached to the GitHub release v0.5.0
 
 # 7. flash your OWN build and verify identity on-device:
-#    boot menu bottom line shows: 0.4.0 <git-sha>  ==  the tag commit
+#    boot menu bottom line shows: 0.5.0 <git-sha>  ==  the tag commit
 ```
 
 If the hash matches and the boot screen shows the tag commit, the

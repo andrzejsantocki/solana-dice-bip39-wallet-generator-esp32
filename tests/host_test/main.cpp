@@ -369,9 +369,9 @@ int main() {
     bool zeroed = true;
     for (int j = 0; j < 32; ++j) if (out[j] != 0) zeroed = false;
     CHECK(zeroed, "hwrng failure zeroes output");
-    // one distinct chunk -> accepted
+    // One distinct bit still indicates a catastrophic low-variation stream.
     pool[15][0] ^= 0x01;
-    CHECK(wc_hwrng_stream_finish(chunks, out), "hwrng one-distinct-block accepted");
+    CHECK(!wc_hwrng_stream_finish(chunks, out), "hwrng one-distinct-bit rejected");
     // rebuild the deterministic fake stream -> digest equals the platform fake
     for (int i = 0; i < 16; ++i)
       for (int j = 0; j < 32; ++j) pool[i][j] = (uint8_t)(i * 32 + j);
@@ -399,7 +399,59 @@ int main() {
   }
   printf("wc_hwrng_stream_finish: health check checked\n");
 
-  // 13) full hybrid KAT: fake HWRNG + transcript -> entropy -> mnemonic -> address
+  // 12c) HWRNG online-health regressions: changing deterministic failures
+  {
+    const uint8_t* chunks[16];
+    uint8_t pool[16][32];
+    uint8_t out[32];
+    // One toggling bit defeats the old all-identical-block test.
+    for (int i = 0; i < 16; ++i) {
+      memset(pool[i], 0, 32);
+      pool[i][0] = (uint8_t)(i & 1);
+      chunks[i] = pool[i];
+    }
+    CHECK(!wc_hwrng_stream_finish(chunks, out), "hwrng toggling-bit stream rejected");
+    // A short 4-byte cycle must also fail.
+    for (int i = 0; i < 16; ++i)
+      for (int j = 0; j < 32; ++j) pool[i][j] = (uint8_t)((i * 32 + j) & 3);
+    CHECK(!wc_hwrng_stream_finish(chunks, out), "hwrng short-cycle stream rejected");
+    // A long repetition run inside otherwise-changing blocks must fail.
+    for (int i = 0; i < 16; ++i)
+      for (int j = 0; j < 32; ++j) pool[i][j] = (uint8_t)(i * 32 + j);
+    memset(&pool[7][8], 0xA5, 16);
+    CHECK(!wc_hwrng_stream_finish(chunks, out), "hwrng repetition run rejected");
+  }
+  printf("wc_hwrng_stream_finish: changing-failure tests checked\n");
+
+  // 13) public crypto API bounds fail closed
+  {
+    uint8_t seed129[129] = {0};
+    uint8_t k[32], cc[32];
+    memset(k, 0xCC, sizeof(k)); memset(cc, 0xCC, sizeof(cc));
+    CHECK(!wc_slip10_master(seed129, sizeof(seed129), k, cc), "slip10 seed_len>128 rejected");
+    bool zeroed = true;
+    for (int i = 0; i < 32; ++i) if (k[i] || cc[i]) zeroed = false;
+    CHECK(zeroed, "slip10 rejected outputs zeroed");
+
+    char long_pp[WC_PASSPHRASE_MAX_LEN + 1];
+    memset(long_pp, 'x', sizeof(long_pp)); long_pp[sizeof(long_pp) - 1] = 0;
+    uint8_t seed[64]; memset(seed, 0xCC, sizeof(seed));
+    CHECK(!wc_seed_from_mnemonic(BIP39_VECTORS[0].mnemonic, long_pp, seed),
+          "oversized passphrase rejected");
+    zeroed = true;
+    for (int i = 0; i < 64; ++i) if (seed[i]) zeroed = false;
+    CHECK(zeroed, "seed rejected output zeroed");
+  }
+  printf("crypto API bounds: rejection checked\n");
+
+  // 14) result-state policy: generated secrets lock dice input until clear
+  {
+    CHECK(wc_roll_input_allowed(false), "roll input allowed before generation");
+    CHECK(!wc_roll_input_allowed(true), "roll input blocked while result secrets exist");
+  }
+  printf("result-state policy: secret lock checked\n");
+
+  // 15) full hybrid KAT: fake HWRNG + transcript -> entropy -> mnemonic -> address
   {
     const HybridVector* v = &HYBRID_VECTOR;
     char got[129];

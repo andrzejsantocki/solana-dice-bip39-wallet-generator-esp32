@@ -12,10 +12,16 @@ void wc_secure_zero(void* p, size_t n) {
 }
 
 // ---------------- HMAC-SHA512 ----------------
-static void hmac_sha512(const uint8_t* key, size_t keylen,
+static bool hmac_sha512(const uint8_t* key, size_t keylen,
                         const uint8_t* data, size_t datalen,
                         uint8_t out[64]) {
-  uint8_t k[128];
+  // Largest current input is a WC_MNEMONIC_MAX_LEN-byte mnemonic. Enforce the
+  // fixed workspace contract instead of trusting every caller.
+  if (!key || !data || !out || datalen > WC_MNEMONIC_MAX_LEN) {
+    if (out) wc_secure_zero(out, 64);
+    return false;
+  }
+  uint8_t k[128] = {0};
   size_t klen = keylen;
   if (keylen > 128) {
     uint8_t h[64];
@@ -30,7 +36,7 @@ static void hmac_sha512(const uint8_t* key, size_t keylen,
   for (int i = 0; i < 128; ++i) { ipad[i] = 0x36; opad[i] = 0x5c; }
   for (size_t i = 0; i < klen; ++i) { ipad[i] ^= k[i]; opad[i] ^= k[i]; }
 
-  uint8_t inner[128 + 128];
+  uint8_t inner[128 + WC_MNEMONIC_MAX_LEN];
   memcpy(inner, ipad, 128);
   memcpy(inner + 128, data, datalen);
   uint8_t h[64];
@@ -44,6 +50,7 @@ static void hmac_sha512(const uint8_t* key, size_t keylen,
   wc_secure_zero(opad, sizeof(opad));
   wc_secure_zero(inner, sizeof(inner));
   wc_secure_zero(h, sizeof(h));
+  return true;
 }
 
 // ---------------- Von Neumann extraction ----------------
@@ -112,6 +119,11 @@ void wc_quiz_positions(const uint8_t hash[32], uint8_t pos[4]) {
     for (uint8_t j = 0; j < k; ++j) if (pos[j] == v) used = true;
     if (!used) pos[k++] = v;
   }
+}
+
+// ---------------- UI state policy ----------------
+bool wc_roll_input_allowed(bool secrets_present) {
+  return !secrets_present;
 }
 
 // ---------------- keyboard edge parsing ----------------
@@ -201,19 +213,41 @@ bool wc_hwrng_stream_finish(const uint8_t* const chunks[16], uint8_t out[32]) {
       return false;
     }
   }
-  bool allIdentical = true;
-  for (int i = 1; i < 16; ++i) {
-    if (memcmp(chunks[0], chunks[i], 32) != 0) { allIdentical = false; break; }
-  }
-  if (allIdentical) {
-    wc_secure_zero(out, 32);
-    return false;
-  }
   static const uint8_t domain[] = "DiceWallet hybrid hwrng v1";  // 26 bytes
   const size_t DLEN = sizeof(domain) - 1;
   uint8_t buf[DLEN + 16 * 32];
   memcpy(buf, domain, DLEN);
   for (int i = 0; i < 16; ++i) memcpy(buf + DLEN + (size_t)i * 32, chunks[i], 32);
+
+  // Lightweight online catastrophic-failure tests over the 512-byte sample:
+  // repetition-count (16 equal bytes), adaptive proportion (one byte >64/512),
+  // and exact short-cycle detection (periods 1..32). These are fault detectors,
+  // not a statistical certification of ESP32-S3 entropy quality.
+  const uint8_t* sample = buf + DLEN;
+  uint16_t counts[256] = {0};
+  size_t run = 1;
+  bool unhealthy = false;
+  for (size_t i = 0; i < 512; ++i) {
+    if (++counts[sample[i]] > 64) unhealthy = true;
+    if (i && sample[i] == sample[i - 1]) {
+      if (++run >= 16) unhealthy = true;
+    } else {
+      run = 1;
+    }
+  }
+  for (size_t period = 1; period <= 32 && !unhealthy; ++period) {
+    bool repeats = true;
+    for (size_t i = period; i < 512; ++i) {
+      if (sample[i] != sample[i % period]) { repeats = false; break; }
+    }
+    if (repeats) unhealthy = true;
+  }
+  wc_secure_zero(counts, sizeof(counts));
+  if (unhealthy) {
+    wc_secure_zero(buf, sizeof(buf));
+    wc_secure_zero(out, 32);
+    return false;
+  }
   wc_sha256(buf, sizeof(buf), out);
   wc_secure_zero(buf, sizeof(buf));
   return true;
@@ -250,10 +284,14 @@ void wc_mnemonic_from_entropy(const uint8_t ent[32], char* out) {
 }
 
 // PBKDF2-HMAC-SHA512, single block (dkLen=64 == SHA512 block size).
-void wc_seed_from_mnemonic(const char* mnemonic, const char* passphrase_nfkd,
+bool wc_seed_from_mnemonic(const char* mnemonic, const char* passphrase_nfkd,
                            uint8_t seed[64]) {
-  size_t mlen = strlen(mnemonic);
-  size_t plen = strlen(passphrase_nfkd);
+  if (!seed) return false;
+  wc_secure_zero(seed, 64);
+  if (!mnemonic || !passphrase_nfkd) return false;
+  size_t mlen = strnlen(mnemonic, WC_MNEMONIC_MAX_LEN);
+  size_t plen = strnlen(passphrase_nfkd, WC_PASSPHRASE_MAX_LEN);
+  if (mlen == WC_MNEMONIC_MAX_LEN || plen == WC_PASSPHRASE_MAX_LEN) return false;
   uint8_t salt[8 + WC_PASSPHRASE_MAX_LEN + 4];
   memcpy(salt, "mnemonic", 8);
   memcpy(salt + 8, passphrase_nfkd, plen);
@@ -271,6 +309,7 @@ void wc_seed_from_mnemonic(const char* mnemonic, const char* passphrase_nfkd,
   wc_secure_zero(salt, sizeof(salt));
   wc_secure_zero(U, sizeof(U));
   wc_secure_zero(T, sizeof(T));
+  return true;
 }
 
 // ---------------- NFKD ----------------
@@ -294,13 +333,18 @@ bool wc_nfkd(const char* in, char* out, size_t out_cap) {
 }
 
 // ---------------- SLIP-0010 ----------------
-void wc_slip10_master(const uint8_t* seed, size_t seed_len, uint8_t kL[32],
+bool wc_slip10_master(const uint8_t* seed, size_t seed_len, uint8_t kL[32],
                       uint8_t chaincode[32]) {
+  if (!kL || !chaincode) return false;
+  wc_secure_zero(kL, 32);
+  wc_secure_zero(chaincode, 32);
+  if (!seed || seed_len == 0 || seed_len > 128) return false;
   uint8_t I[64];
-  hmac_sha512((const uint8_t*)"ed25519 seed", 12, seed, seed_len, I);
+  if (!hmac_sha512((const uint8_t*)"ed25519 seed", 12, seed, seed_len, I)) return false;
   memcpy(kL, I, 32);
   memcpy(chaincode, I + 32, 32);
   wc_secure_zero(I, sizeof(I));
+  return true;
 }
 
 void wc_slip10_child(const uint8_t kL[32], const uint8_t chaincode[32],

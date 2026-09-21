@@ -8,11 +8,11 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   host-tests:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
@@ -20,11 +20,14 @@ jobs:
         run: bash tests/build_host_test.sh
         env:
           SANFLAGS: -fsanitize=address,undefined
-      - name: Run crypto + pipeline vector tests
+      - name: Run crypto + pipeline vector tests (sanitizers fail closed)
         run: ./tests/host_test/host_test
+        env:
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+          ASAN_OPTIONS: halt_on_error=1:abort_on_error=1
 
   platformio:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
@@ -33,7 +36,7 @@ jobs:
         with:
           python-version: '3.10'
       - name: Install PlatformIO
-        run: python -m pip install platformio==6.1.19
+        run: python -m pip install --require-hashes -r requirements-build.txt
       - name: Build firmware
         run: python -m platformio run
       - name: Prepare firmware assets
@@ -49,7 +52,9 @@ jobs:
             DiceWallet-cardputer-adv.bin.sha256
 
   release:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
     needs: [host-tests, platformio]
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
