@@ -68,7 +68,7 @@ int modeCursor = 0;
 bool inputAwaitRelease = false;
 // 10 visible 1-6 values derived from the first HWRNG block (report display)
 char hwSample[24];
-constexpr char FW_VERSION[] = "0.4.0";
+constexpr char FW_VERSION[] = "0.5.0";
 #ifndef FW_GIT_SHA
 #define FW_GIT_SHA "unknown"
 #endif
