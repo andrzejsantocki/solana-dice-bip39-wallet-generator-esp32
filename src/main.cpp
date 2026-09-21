@@ -499,7 +499,16 @@ void buildWallet() {
   uint8_t seed[64];
   // This appliance deliberately implements the interoperable 24-word wallet
   // only. BIP39's optional passphrase is always the empty string.
-  wc_seed_from_mnemonic(mnemonic, "", seed);
+  if (!wc_seed_from_mnemonic(mnemonic, "", seed)) {
+    wipeBytes(seed, sizeof(seed));
+    wipeBytes(bytes, sizeof(bytes));
+    wipeBytes(hash, sizeof(hash));
+    wipeChars(mnemonic, sizeof(mnemonic));
+    hasHash = false;
+    statusLine = "SEED DERIVATION ERROR - blocked";
+    drawMain();
+    return;
+  }
   wc_solana_address(seed, address);
   wipeBytes(seed, 64);
   wipeBytes(bytes, 32);
@@ -600,7 +609,11 @@ void clearEverything() {
   // Reports contain correlatable fingerprints/address metadata. Remove the
   // current report as part of clear-all (SD wear-leveling means this is not a
   // forensic secure erase; destroy/reformat media for that threat model).
-  if (sdOK && SD.exists("/dice_wallet/report.txt")) SD.remove("/dice_wallet/report.txt");
+  bool reportDeleted = true;
+  if (sdOK && SD.exists("/dice_wallet/report.txt")) {
+    reportDeleted = SD.remove("/dice_wallet/report.txt") &&
+                    !SD.exists("/dice_wallet/report.txt");
+  }
   wipeRolls();
   wipeChars(tailBuf, sizeof(tailBuf));
   wipeChars(hwSample, sizeof(hwSample));
@@ -615,7 +628,8 @@ void clearEverything() {
   clearArmed = false;
   waitingRelease = false;
   edgeReset();
-  statusLine = "cleared";
+  statusLine = reportDeleted ? "cleared" : "wallet cleared; SD DELETE FAILED";
+  lastReportOK = false;
   resultPage = 0;
   drawMain();
 }
@@ -627,19 +641,17 @@ void initSD() {
 }  // namespace
 
 bool disableRadios() {
-  // Arduino wrappers do not expose all SDK error codes; validate their bool
-  // results, accept ESP-IDF's expected "already stopped/not initialized"
-  // states, then verify logical controller state independently.
-  bool wifiDisconnectOK = WiFi.disconnect(true, true);
+  // Wrapper false can mean "already off". Accept ESP-IDF's expected
+  // stopped/not-initialized states, then verify controller state independently.
+  WiFi.disconnect(true, true);  // false is expected when STA is already off
   bool wifiModeOK = WiFi.mode(WIFI_OFF);
   esp_err_t wifiStop = esp_wifi_stop();
   bool wifiStopOK = wifiStop == ESP_OK || wifiStop == ESP_ERR_WIFI_NOT_INIT ||
                     wifiStop == ESP_ERR_WIFI_NOT_STARTED;
-  bool btStopOK = btStop();
+  btStop();  // wrapper may return false when controller is already disabled
   esp_err_t btDisable = esp_bt_controller_disable();
   bool btDisableOK = btDisable == ESP_OK || btDisable == ESP_ERR_INVALID_STATE;
-  return wifiDisconnectOK && wifiModeOK && wifiStopOK && btStopOK &&
-         btDisableOK && verifyRadios();
+  return wifiModeOK && wifiStopOK && btDisableOK && verifyRadios();
 }
 
 void setup() {
